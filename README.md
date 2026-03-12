@@ -1,5 +1,7 @@
 # mcp-jumpserver-gui-sucks
 
+**CAUTION: Operate production machines with extreme care. This MCP assumes no responsibility for production incidents caused by unsafe or incompetent model behavior.**
+
 A JumpServer 443-only MCP bridge for coding agents such as Codex and Claude. The project exposes a CLI-first, MFA-compatible, audit-preserving path into JumpServer assets without depending on port 2222 or any GUI-driven workflow in normal use.
 
 ## Current Status
@@ -63,17 +65,15 @@ Advanced users can override the location with:
 - `MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR`
 - `MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE`
 
-## Login Before Starting MCP
+## Install
 
-For local development from this repository:
+Use the published package directly:
 
 ```bash
-uv run mcp-jumpserver-gui-sucks login \
-  --base-url https://jumpserver.example.com \
-  --username alice
+uvx mcp-jumpserver-gui-sucks --help
 ```
 
-For the intended released-package workflow:
+## Login Before Starting MCP
 
 ```bash
 uvx mcp-jumpserver-gui-sucks login \
@@ -84,8 +84,8 @@ uvx mcp-jumpserver-gui-sucks login \
 Useful verification commands:
 
 ```bash
-uv run mcp-jumpserver-gui-sucks doctor
-uv run mcp-jumpserver-gui-sucks refresh-session --force
+uvx mcp-jumpserver-gui-sucks doctor
+uvx mcp-jumpserver-gui-sucks refresh-session --force
 ```
 
 The login command persists state outside the repository. MCP client config should only describe how to find that state, not embed the secrets themselves.
@@ -123,24 +123,6 @@ MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS = "8"
 # MCP_JUMPSERVER_GUI_SUCKS_ORG_ID = "00000000-0000-0000-0000-000000000002"
 ```
 
-For local development before the package is published, use a local source checkout through `uvx --from`:
-
-```toml
-[mcp_servers.mcp-jumpserver-gui-sucks-dev]
-command = "uvx"
-args = [
-  "--from",
-  "/Users/rabyte/github/mcp-jumpserver-gui-sucks",
-  "mcp-jumpserver-gui-sucks",
-  "serve",
-]
-startup_timeout_sec = 60.0
-
-[mcp_servers.mcp-jumpserver-gui-sucks-dev.env]
-MCP_JUMPSERVER_GUI_SUCKS_BASE_URL = "https://jumpserver.example.com"
-MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS = "true"
-```
-
 ### Claude (`~/.claude.json`)
 
 This matches the `mcpServers` JSON shape already present in your local `~/.claude.json`:
@@ -157,28 +139,6 @@ This matches the `mcpServers` JSON shape already present in your local `~/.claud
         "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS": "900",
         "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS": "30",
         "MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS": "8"
-      }
-    }
-  }
-}
-```
-
-For local development before publish:
-
-```json
-{
-  "mcpServers": {
-    "mcp-jumpserver-gui-sucks-dev": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "/Users/rabyte/github/mcp-jumpserver-gui-sucks",
-        "mcp-jumpserver-gui-sucks",
-        "serve"
-      ],
-      "env": {
-        "MCP_JUMPSERVER_GUI_SUCKS_BASE_URL": "https://jumpserver.example.com",
-        "MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS": "true"
       }
     }
   }
@@ -226,13 +186,7 @@ Recommended PyPI trusted publisher settings:
 - workflow file: `.github/workflows/publish-pypi.yml`
 - environment name: `pypi`
 
-For the initial `0.1.0` release, the workflow file itself does not change the package version, so the easiest path is:
-
-1. push this workflow to `main`
-2. configure the PyPI trusted publisher
-3. run the workflow once through `workflow_dispatch`
-
-After that, later pushes to `main` that bump `project.version` in `pyproject.toml` will publish automatically.
+After Trusted Publishing is configured once, later pushes to `main` that bump `project.version` in `pyproject.toml` will publish automatically.
 
 ## Current CLI Surface
 
