@@ -1,6 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "mcp-jumpserver-gui-sucks"
 version = "0.1.0"
-description = "Add your description here"
+description = "JumpServer 443-only MCP bridge for coding agents"
+readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "cryptography>=46.0.5",
+    "httpx>=0.28.1",
+    "mcp>=1.26.0",
+    "platformdirs>=4.9.4",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+mcp-jumpserver-gui-sucks = "mcp_jumpserver_gui_sucks.cli:main"
