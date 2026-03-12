@@ -205,6 +205,35 @@ The recommended minimum MCP config is usually:
 - `MCP_JUMPSERVER_GUI_SUCKS_BASE_URL`
 - optionally `MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR` or `MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE`
 
+## PyPI Release Automation
+
+The repository now includes [publish-pypi.yml](.github/workflows/publish-pypi.yml).
+
+Its behavior is intentionally:
+
+- every push to `main` inspects `pyproject.toml`
+- if the package version changed and that version does not already exist on PyPI, GitHub Actions builds and publishes it
+- if the version did not change, the workflow skips publishing
+- if the version already exists on PyPI, the workflow skips publishing
+- `workflow_dispatch` can be used to publish the current version manually when it is not yet on PyPI
+
+The publish job uses PyPI Trusted Publishing through GitHub OIDC. Configure PyPI to trust this repository and workflow before expecting the publish step to succeed.
+
+Recommended PyPI trusted publisher settings:
+
+- owner: `ArtiPyHeart`
+- repository: `mcp-jumpserver-gui-sucks`
+- workflow file: `.github/workflows/publish-pypi.yml`
+- environment name: `pypi`
+
+For the initial `0.1.0` release, the workflow file itself does not change the package version, so the easiest path is:
+
+1. push this workflow to `main`
+2. configure the PyPI trusted publisher
+3. run the workflow once through `workflow_dispatch`
+
+After that, later pushes to `main` that bump `project.version` in `pyproject.toml` will publish automatically.
+
 ## Current CLI Surface
 
 - `mcp-jumpserver-gui-sucks login`
