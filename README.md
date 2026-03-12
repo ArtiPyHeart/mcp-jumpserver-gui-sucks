@@ -1,67 +1,223 @@
 # mcp-jumpserver-gui-sucks
 
-A JumpServer 443-only MCP client for coding agents such as Codex. The project aims to reuse JumpServer's Web, API, and WebSocket capabilities without relying on port 2222, and expose them as an auditable, authorization-aware, and extensible entry point for LLM-driven operations on assets behind the bastion host.
-
-## Current Constraints
-
-- Use only the JumpServer 443 path and do not depend on port 2222.
-- Prefer REST first and use WebSocket only where interactive terminal behavior is required.
-- Start with CLI-first login, CLI-entered MFA, and durable access-key persistence whenever possible.
-- Do not bypass JumpServer authorization, auditing, command filtering, or approval workflows.
-
-## Repository Notes
-
-- The detailed development plan lives in `mcp-jumpserver-gui-sucks-development-plan.md`.
-- Live instance recon notes live in `docs/live-instance-recon.md`.
-- Web terminal flow notes live in `docs/web-terminal-flow.md`.
-- Auth-state file notes live in `docs/auth-state-format.md`.
-- CLI login notes live in `docs/cli-login-flow.md`.
-- `extern/` stores upstream JumpServer source code for reference and is not tracked by Git.
-- The development workflow uses `uv`, and the current interpreter is `.venv/bin/python`.
-- The release target is a package that can be invoked directly with `uvx`.
+A JumpServer 443-only MCP bridge for coding agents such as Codex and Claude. The project exposes a CLI-first, MFA-compatible, audit-preserving path into JumpServer assets without depending on port 2222 or any GUI-driven workflow in normal use.
 
 ## Current Status
 
-The repository now has an initial CLI-first authentication and discovery surface:
+The main CLI and MCP chain is working against a real JumpServer instance:
 
-- CLI login with terminal-entered MFA
-- durable JumpServer access-key persistence in the user-scoped state directory
-- a web-session-first login implementation path for KoKo-oriented work
-- terminal-session cookie keepalive and stale-session recovery for KoKo-oriented work
-- a verified CLI-side KoKo websocket probe
-- a verified one-shot KoKo terminal command execution path
-- a verified MCP-side managed KoKo terminal session flow for multi-turn interaction
-- runtime probing through `paths` and `doctor`
-- MCP tools for profile, nodes, asset discovery, and asset access summaries
+- CLI-first login with terminal-entered MFA
+- persisted durable `access_key` auth for REST discovery
+- persisted authenticated web-session cookies for KoKo terminal flows
+- asset, node, connect-method, and asset-access discovery
+- KoKo 443 WebSocket probing
+- one-shot remote command execution through KoKo
+- managed multi-turn terminal sessions for MCP-driven shell interaction
+- process-local terminal idle reaping and session-cap enforcement
+- explicit cookie-session refresh probing before terminal work
+- a line-oriented CLI shell for non-MCP interactive terminal use
 
-The current login work is intentionally split into two auth layers:
+The current implementation is usable, but it is not feature-complete yet. The most important known limitation is:
 
-- authenticated web-session cookies for KoKo and other browser-session-protected flows
-- durable access keys for REST discovery and later API calls
+- terminal access still depends on a valid cookie-backed web session, so a fully expired terminal session still requires a fresh `login` run with MFA
 
-The current terminal work is intentionally split into two execution modes:
+The project does not currently aim to provide file-manager or SFTP coverage.
 
-- one-shot command execution for simple remote checks and automation
-- process-local managed terminal sessions for MCP-driven multi-turn shell interaction
+## Tracked Project Docs
 
-## Near-Term Priorities
+- [docs/live-instance-recon.md](docs/live-instance-recon.md)
+- [docs/web-terminal-flow.md](docs/web-terminal-flow.md)
+- [docs/auth-state-format.md](docs/auth-state-format.md)
+- [docs/cli-login-flow.md](docs/cli-login-flow.md)
 
-1. Keep extending the instance-specific map from `/api/docs/` and verified live traffic.
-2. Expand the REST surface for permissions, connection tokens, and non-interactive command execution.
-3. Add KoKo WebSocket coverage for interactive terminal workflows that cannot stay REST-only.
+## Upstream Reference Repositories
+
+The repository keeps several untracked upstream JumpServer codebases under `extern/` for protocol and behavior reference only. They are not runtime dependencies of this package.
+
+- `extern/jumpserver`: backend API, authentication, and permission-model reference
+- `extern/koko`: KoKo terminal gateway and WebSocket behavior reference
+- `extern/luna`: legacy web-terminal frontend flow reference, especially around browser-driven terminal bootstrap behavior
+- `extern/lina`: newer web UI and API usage-pattern reference
+- `extern/client`: official client-side implementation reference for adjacent access workflows
+
+## Authentication Model
+
+The runtime intentionally uses two auth layers:
+
+- `access_key` for durable REST access
+- authenticated web-session cookies for KoKo terminal access
+
+Do not put live session secrets, cookies, or MFA values into MCP client config files. The intended flow is:
+
+1. Run the CLI login command once.
+2. Complete MFA in the terminal.
+3. Let the tool persist auth state into the user-scoped application state directory.
+4. Start the MCP server from Codex or Claude.
+
+By default, persisted auth state lives under the platform-specific user application state directory:
+
+- macOS example: `~/Library/Application Support/mcp-jumpserver-gui-sucks/auth-state.json`
+
+Advanced users can override the location with:
+
+- `MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR`
+- `MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE`
+
+## Login Before Starting MCP
+
+For local development from this repository:
+
+```bash
+uv run mcp-jumpserver-gui-sucks login \
+  --base-url https://jumpserver.example.com \
+  --username alice
+```
+
+For the intended released-package workflow:
+
+```bash
+uvx mcp-jumpserver-gui-sucks login \
+  --base-url https://jumpserver.example.com \
+  --username alice
+```
+
+Useful verification commands:
+
+```bash
+uv run mcp-jumpserver-gui-sucks doctor
+uv run mcp-jumpserver-gui-sucks refresh-session --force
+```
+
+The login command persists state outside the repository. MCP client config should only describe how to find that state, not embed the secrets themselves.
+
+## MCP Configuration
+
+The MCP server entrypoint is:
+
+```bash
+uvx mcp-jumpserver-gui-sucks serve
+```
+
+`serve` defaults to `stdio`, which is the correct transport for Codex and Claude desktop-style MCP clients.
+
+### Codex (`~/.codex/config.toml`)
+
+This matches the `mcp_servers.*` structure already used in your local `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mcp-jumpserver-gui-sucks]
+command = "uvx"
+args = ["mcp-jumpserver-gui-sucks", "serve"]
+startup_timeout_sec = 60.0
+
+[mcp_servers.mcp-jumpserver-gui-sucks.env]
+MCP_JUMPSERVER_GUI_SUCKS_BASE_URL = "https://jumpserver.example.com"
+MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS = "true"
+MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS = "900"
+MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS = "30"
+MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS = "8"
+
+# Optional when the default state directory is not desired.
+# MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR = "/Users/alice/Library/Application Support/mcp-jumpserver-gui-sucks"
+# MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE = "/Users/alice/Library/Application Support/mcp-jumpserver-gui-sucks/auth-state.json"
+# MCP_JUMPSERVER_GUI_SUCKS_ORG_ID = "00000000-0000-0000-0000-000000000002"
+```
+
+For local development before the package is published, use a local source checkout through `uvx --from`:
+
+```toml
+[mcp_servers.mcp-jumpserver-gui-sucks-dev]
+command = "uvx"
+args = [
+  "--from",
+  "/Users/rabyte/github/mcp-jumpserver-gui-sucks",
+  "mcp-jumpserver-gui-sucks",
+  "serve",
+]
+startup_timeout_sec = 60.0
+
+[mcp_servers.mcp-jumpserver-gui-sucks-dev.env]
+MCP_JUMPSERVER_GUI_SUCKS_BASE_URL = "https://jumpserver.example.com"
+MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS = "true"
+```
+
+### Claude (`~/.claude.json`)
+
+This matches the `mcpServers` JSON shape already present in your local `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcp-jumpserver-gui-sucks": {
+      "command": "uvx",
+      "args": ["mcp-jumpserver-gui-sucks", "serve"],
+      "env": {
+        "MCP_JUMPSERVER_GUI_SUCKS_BASE_URL": "https://jumpserver.example.com",
+        "MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS": "true",
+        "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS": "900",
+        "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS": "30",
+        "MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS": "8"
+      }
+    }
+  }
+}
+```
+
+For local development before publish:
+
+```json
+{
+  "mcpServers": {
+    "mcp-jumpserver-gui-sucks-dev": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "/Users/rabyte/github/mcp-jumpserver-gui-sucks",
+        "mcp-jumpserver-gui-sucks",
+        "serve"
+      ],
+      "env": {
+        "MCP_JUMPSERVER_GUI_SUCKS_BASE_URL": "https://jumpserver.example.com",
+        "MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS": "true"
+      }
+    }
+  }
+}
+```
+
+## Supported Environment Variables
+
+The current runtime reads these environment variables:
+
+- `MCP_JUMPSERVER_GUI_SUCKS_BASE_URL`
+- `MCP_JUMPSERVER_GUI_SUCKS_ORG_ID`
+- `MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR`
+- `MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE`
+- `MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS`
+- `MCP_JUMPSERVER_GUI_SUCKS_LOG_LEVEL`
+- `MCP_JUMPSERVER_GUI_SUCKS_REQUEST_TIMEOUT_SECONDS`
+- `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS`
+- `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS`
+- `MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS`
+
+The recommended minimum MCP config is usually:
+
+- `MCP_JUMPSERVER_GUI_SUCKS_BASE_URL`
+- optionally `MCP_JUMPSERVER_GUI_SUCKS_STATE_DIR` or `MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE`
 
 ## Current CLI Surface
 
-- `uv run mcp-jumpserver-gui-sucks login --base-url https://jumpserver.example.com --username alice`
-- `uv run mcp-jumpserver-gui-sucks paths`
-- `uv run mcp-jumpserver-gui-sucks doctor`
-- `uv run mcp-jumpserver-gui-sucks refresh-session --force`
-- `uv run mcp-jumpserver-gui-sucks resolve-target --asset-ref 192.168.15.70 --account-ref root`
-- `uv run mcp-jumpserver-gui-sucks koko-probe --asset-id ... --account ...`
-- `uv run mcp-jumpserver-gui-sucks terminal-exec --asset-ref 192.168.15.70 --account-ref root --command ...`
-- `uv run mcp-jumpserver-gui-sucks terminal-shell --asset-ref 192.168.15.70 --account-ref root`
-- `uv run mcp-jumpserver-gui-sucks save-state --base-url ... --cookie ... --header ... --access-key-id ... --access-key-secret ...`
-- `uv run mcp-jumpserver-gui-sucks clear-state`
+- `mcp-jumpserver-gui-sucks login`
+- `mcp-jumpserver-gui-sucks paths`
+- `mcp-jumpserver-gui-sucks doctor`
+- `mcp-jumpserver-gui-sucks refresh-session`
+- `mcp-jumpserver-gui-sucks resolve-target`
+- `mcp-jumpserver-gui-sucks koko-probe`
+- `mcp-jumpserver-gui-sucks terminal-exec`
+- `mcp-jumpserver-gui-sucks terminal-shell`
+- `mcp-jumpserver-gui-sucks save-state`
+- `mcp-jumpserver-gui-sucks clear-state`
+- `mcp-jumpserver-gui-sucks serve`
 
 ## Current MCP Tools
 
@@ -87,25 +243,10 @@ The current terminal work is intentionally split into two execution modes:
 - `jms_resize_terminal_session`
 - `jms_close_terminal_session`
 
-## Managed Terminal Session Notes
+## Operational Notes
 
-- Managed terminal sessions are process-local and intended for the MCP server lifetime, not for repeated standalone CLI invocations.
-- The CLI also now exposes a line-oriented `terminal-shell` command for single-process interactive shell work without requiring UUID-only input.
-- Managed terminal sessions now have automatic idle reaping and a configurable session cap.
-- The relevant runtime environment variables are:
-  - `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS`
-  - `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS`
-  - `MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS`
-- KoKo-oriented terminal entrypoints now preflight the cookie-backed web session through `GET /api/v1/authentication/user-session/`.
-- If that cookie session is still valid, the runtime refreshes and re-persists the cookie expiry before opening the terminal.
-- If that cookie session is no longer valid, the runtime raises an explicit re-login error instead of deferring the failure to a lower-level websocket handshake.
-- `jms_read_terminal_session` returns both:
-  - `output_text`: a fuller terminal transcript with prompt and echoed input preserved
-  - `stdout_text`: a cleaned view with ANSI noise, shell prompt noise, and leading echoed input reduced for agent consumption
-- The verified lifecycle is:
-  - open session
-  - write terminal data
-  - read terminal output
-  - resize terminal
-  - close terminal or let the remote shell close it
-- When a session is reaped for idleness, later reads and writes will fail with an explicit expired-session error instead of silently keeping a stale handle alive.
+- Managed terminal sessions are process-local and intended to live only for the MCP server process lifetime.
+- `terminal-shell` is line-oriented, not a full raw TTY emulator.
+- Terminal entrypoints preflight the cookie-backed web session before opening KoKo.
+- If the cookie-backed session is already invalid, terminal calls fail early with an explicit re-login requirement instead of a low-level websocket failure.
+- REST discovery can continue to work when the durable `access_key` remains valid, even if terminal access requires a fresh login.
