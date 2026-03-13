@@ -614,6 +614,25 @@ async def resolve_terminal_target_payload(
     }
 
 
+async def resolve_terminal_tool_target(
+    *,
+    asset_ref: str,
+    account_ref: str,
+    protocol: str = "ssh",
+) -> tuple[str, str, dict[str, Any]]:
+    """Resolve user-facing terminal inputs into concrete asset/account IDs."""
+    resolved = await resolve_terminal_target_payload(
+        asset_ref=asset_ref,
+        account_ref=account_ref,
+        protocol=protocol,
+    )
+    return (
+        str(resolved["asset"]["id"]),
+        str(resolved["account"]["id"]),
+        resolved,
+    )
+
+
 async def list_connection_tokens_payload(
     *,
     limit: int = 20,
@@ -646,17 +665,23 @@ async def create_connection_token_payload(
     connect_method: str = "web_cli",
     reusable: bool = False,
 ) -> dict[str, Any]:
+    resolved_asset_id, resolved_account_id, resolved_target = await resolve_terminal_tool_target(
+        asset_ref=asset_id,
+        account_ref=account,
+        protocol=protocol,
+    )
     settings, _, auth_state = require_auth_state()
     client = JumpServerClient(settings, auth_state)
     payload = await client.create_connection_token(
-        asset_id=asset_id,
-        account=account,
+        asset_id=resolved_asset_id,
+        account=resolved_account_id,
         protocol=protocol,
         connect_method=connect_method,
         is_reusable=reusable,
     )
     return {
         "created": True,
+        "resolved_target": resolved_target,
         "token": normalize_connection_token_entry(payload),
     }
 
@@ -684,17 +709,23 @@ async def probe_koko_terminal_payload(
     settings, _, auth_state, terminal_auth = await ensure_terminal_auth_state(
         force_refresh=True,
     )
+    resolved_asset_id, resolved_account_id, resolved_target = await resolve_terminal_tool_target(
+        asset_ref=asset_id,
+        account_ref=account,
+        protocol=protocol,
+    )
     payload = await probe_koko_terminal(
         settings,
         auth_state,
-        asset_id=asset_id,
-        account=account,
+        asset_id=resolved_asset_id,
+        account=resolved_account_id,
         protocol=protocol,
         connect_method=connect_method,
         cols=cols,
         rows=rows,
         max_messages=max_messages,
     )
+    payload["resolved_target"] = resolved_target
     payload["terminal_auth"] = terminal_auth
     return payload
 
@@ -715,11 +746,16 @@ async def execute_koko_command_payload(
     settings, _, auth_state, terminal_auth = await ensure_terminal_auth_state(
         force_refresh=True,
     )
+    resolved_asset_id, resolved_account_id, resolved_target = await resolve_terminal_tool_target(
+        asset_ref=asset_id,
+        account_ref=account,
+        protocol=protocol,
+    )
     payload = await execute_koko_command(
         settings,
         auth_state,
-        asset_id=asset_id,
-        account=account,
+        asset_id=resolved_asset_id,
+        account=resolved_account_id,
         command=command,
         protocol=protocol,
         connect_method=connect_method,
@@ -729,6 +765,7 @@ async def execute_koko_command_payload(
         command_idle_timeout_seconds=command_idle_timeout_seconds,
         total_timeout_seconds=total_timeout_seconds,
     )
+    payload["resolved_target"] = resolved_target
     payload["terminal_auth"] = terminal_auth
     return payload
 
@@ -753,18 +790,24 @@ async def open_terminal_session_payload(
     settings, _, auth_state, terminal_auth = await ensure_terminal_auth_state(
         force_refresh=True,
     )
+    resolved_asset_id, resolved_account_id, resolved_target = await resolve_terminal_tool_target(
+        asset_ref=asset_id,
+        account_ref=account,
+        protocol=protocol,
+    )
     manager = get_terminal_session_manager()
     payload = await manager.open_session(
         settings,
         auth_state,
-        asset_id=asset_id,
-        account=account,
+        asset_id=resolved_asset_id,
+        account=resolved_account_id,
         protocol=protocol,
         connect_method=connect_method,
         cols=cols,
         rows=rows,
         startup_idle_timeout_seconds=startup_idle_timeout_seconds,
     )
+    payload["resolved_target"] = resolved_target
     payload["terminal_auth"] = terminal_auth
     return payload
 

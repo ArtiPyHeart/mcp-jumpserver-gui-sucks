@@ -121,7 +121,7 @@ async def jms_create_connection_token(
     connect_method: str = "web_cli",
     reusable: bool = False,
 ) -> dict[str, Any]:
-    """Create a connection token and return a sanitized token summary."""
+    """Create a connection token using a concrete account ID or a user-facing account reference."""
     return await create_connection_token_payload(
         asset_id=asset_id,
         account=account,
@@ -147,7 +147,7 @@ async def jms_probe_koko_terminal(
     rows: int = 24,
     max_messages: int = 4,
 ) -> dict[str, Any]:
-    """Create a short-lived token, attempt a KoKo terminal websocket handshake, and report sanitized probe results."""
+    """Probe KoKo terminal access using a concrete account ID or a user-facing account reference."""
     return await probe_koko_terminal_payload(
         asset_id=asset_id,
         account=account,
@@ -172,7 +172,7 @@ async def jms_execute_koko_command(
     command_idle_timeout_seconds: float = 1.5,
     total_timeout_seconds: float = 20.0,
 ) -> dict[str, Any]:
-    """Run one terminal command through KoKo Web CLI and return the captured transcript."""
+    """Run one terminal command through KoKo Web CLI using a concrete account ID or a user-facing account reference."""
     return await execute_koko_command_payload(
         asset_id=asset_id,
         account=account,
@@ -209,7 +209,7 @@ async def jms_open_terminal_session(
     rows: int = 32,
     startup_idle_timeout_seconds: float = 1.5,
 ) -> dict[str, Any]:
-    """Open a managed KoKo terminal session and return a reusable local session handle."""
+    """Open a managed KoKo terminal session using a concrete account ID or a user-facing account reference."""
     return await open_terminal_session_payload(
         asset_id=asset_id,
         account=account,

@@ -23,6 +23,8 @@ The current implementation is usable, but it is not feature-complete yet. The mo
 
 - terminal access still depends on a valid cookie-backed web session, so a fully expired terminal session still requires a fresh `login` run with MFA
 
+Terminal-oriented entry points now accept either the concrete JumpServer account ID/alias required by the API or a user-facing account reference such as `root`, `test-root`, or the account username. The MCP resolves that reference to the concrete per-asset account ID before opening terminal sessions or creating connection tokens.
+
 The project does not currently aim to provide file-manager or SFTP coverage.
 
 ## Tracked Project Docs

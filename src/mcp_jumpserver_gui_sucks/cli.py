@@ -598,9 +598,6 @@ async def resolve_terminal_target_args(
     account_ref = str(getattr(args, "account_ref", "") or "").strip()
     protocol = str(getattr(args, "protocol", "ssh") or "ssh").strip()
 
-    if asset_id and account_id:
-        return asset_id, account_id, None
-
     resolved = await resolve_terminal_target_payload(
         asset_ref=asset_id or asset_ref,
         account_ref=account_id or account_ref,
