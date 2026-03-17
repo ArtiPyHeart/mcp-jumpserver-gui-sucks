@@ -7,9 +7,12 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .service import (
+    acquire_terminal_session_payload,
     build_paths_payload,
     build_status_payload,
+    build_terminal_usage_guide_payload,
     create_connection_token_payload,
+    execute_in_terminal_session_payload,
     expire_connection_token_payload,
     execute_koko_command_payload,
     refresh_terminal_auth_payload,
@@ -36,8 +39,10 @@ mcp = FastMCP(
     instructions=(
         "JumpServer discovery and session-preparation tools backed by persisted "
         "CLI-derived authentication state. Use status and asset-discovery tools first. "
-        "Connection-token tools create short-lived launch material and should be expired "
-        "when no longer needed."
+        "For terminal work, call jms_terminal_usage_guide first, then prefer "
+        "jms_acquire_terminal_session plus jms_execute_in_terminal_session so one shell "
+        "is reused per target. Close managed shells with jms_close_terminal_session when "
+        "the task is done. Reserve jms_execute_koko_command for one-shot terminal work."
     ),
     json_response=True,
 )
@@ -53,6 +58,12 @@ def jms_paths() -> dict[str, Any]:
 async def jms_status() -> dict[str, Any]:
     """Probe the local auth state and the current JumpServer session."""
     return await build_status_payload()
+
+
+@mcp.tool()
+async def jms_terminal_usage_guide() -> dict[str, Any]:
+    """Return the recommended terminal workflow for coding agents using this MCP."""
+    return await build_terminal_usage_guide_payload()
 
 
 @mcp.tool()
@@ -191,6 +202,28 @@ async def jms_execute_koko_command(
 
 
 @mcp.tool()
+async def jms_acquire_terminal_session(
+    asset_ref: str,
+    account_ref: str = "",
+    protocol: str = "ssh",
+    connect_method: str = "web_cli",
+    cols: int = 120,
+    rows: int = 32,
+    startup_idle_timeout_seconds: float = 1.5,
+) -> dict[str, Any]:
+    """Resolve a target and get or reuse one managed KoKo shell for that asset/account pair."""
+    return await acquire_terminal_session_payload(
+        asset_ref=asset_ref,
+        account_ref=account_ref,
+        protocol=protocol,
+        connect_method=connect_method,
+        cols=cols,
+        rows=rows,
+        startup_idle_timeout_seconds=startup_idle_timeout_seconds,
+    )
+
+
+@mcp.tool()
 async def jms_refresh_terminal_auth(force: bool = False) -> dict[str, Any]:
     """Refresh the persisted cookie-backed terminal session if it is still valid, or report that re-login is required."""
     return await refresh_terminal_auth_payload(force=force)
@@ -248,6 +281,22 @@ async def jms_read_terminal_session(
     return await read_terminal_session_payload(
         session_handle=session_handle,
         idle_timeout_seconds=idle_timeout_seconds,
+        total_timeout_seconds=total_timeout_seconds,
+    )
+
+
+@mcp.tool()
+async def jms_execute_in_terminal_session(
+    session_handle: str,
+    command: str,
+    command_idle_timeout_seconds: float = 1.5,
+    total_timeout_seconds: float = 20.0,
+) -> dict[str, Any]:
+    """Run one command through an already acquired managed KoKo shell."""
+    return await execute_in_terminal_session_payload(
+        session_handle=session_handle,
+        command=command,
+        command_idle_timeout_seconds=command_idle_timeout_seconds,
         total_timeout_seconds=total_timeout_seconds,
     )
 

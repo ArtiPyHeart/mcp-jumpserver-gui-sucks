@@ -274,109 +274,52 @@ class TerminalSessionManager:
             reuse_existing=reuse_existing,
         )
         session_handle = str(opened_payload["session_handle"])
-        session = await self._require_session(session_handle)
-        start_marker = f"__MCP_JMS_COMMAND_START_{uuid4().hex}__"
-        end_marker = f"__MCP_JMS_EXIT_STATUS_{uuid4().hex}__"
-        result: dict[str, Any] = {
-            "asset_id": asset_id,
-            "account": account,
-            "protocol": protocol,
-            "connect_method": connect_method,
-            "command": command,
-            "ws_connected": True,
-            "command_sent": False,
-            "exit_status": None,
-            "session_handle": session_handle,
-            "opened": bool(opened_payload.get("opened")),
-            "reused_existing": bool(opened_payload.get("reused_existing")),
-            "max_terminal_sessions": self._max_sessions,
-        }
-        for field in (
-            "active_session_count",
-            "shell_prompt",
-            "remote_terminal_id",
-            "remote_session_id",
-            "connect_summary",
-            "created_at",
-            "last_activity_at",
-            "idle_timeout_seconds",
-            "idle_seconds",
-            "expires_in_seconds",
-            "target_key",
-        ):
-            if field in opened_payload:
-                result[field] = opened_payload[field]
-        if opened_payload.get("opened"):
-            for field in (
-                "startup_control_types",
-                "startup_binary_frame_count",
-                "startup_output_raw",
-                "startup_output_text",
-                "startup_stdout_text",
-            ):
-                if field in opened_payload:
-                    result[field] = opened_payload[field]
-
-        async with session._lock:
-            script = build_exec_script(command, start_marker, end_marker, exit_shell=False)
-            await session.terminal.send_terminal_data(script)
-            session.pending_inputs.append(normalize_terminal_text(script))
-            result["command_sent"] = True
-            transcript = await session.terminal.drain_until_idle(
-                idle_timeout_seconds=command_idle_timeout_seconds,
-                total_timeout_seconds=total_timeout_seconds,
-            )
-            session.touch()
-            command_raw = normalize_terminal_text(transcript.raw_text())
-            command_text = strip_ansi_sequences(command_raw)
-            detected_prompt = detect_shell_prompt(command_text)
-            if detected_prompt:
-                session.shell_prompt = detected_prompt
-            prompt_stripped = strip_shell_prompt(command_text, session.shell_prompt)
-            stdout_text, remaining_inputs = strip_pending_input_echoes(
-                prompt_stripped,
-                session.pending_inputs,
-            )
-            session.pending_inputs = remaining_inputs
-            exit_status, command_without_markers = extract_between_markers(
-                stdout_text,
-                start_marker=start_marker,
-                end_marker=end_marker,
-            )
-            result.update(
-                {
-                    "exit_status": exit_status,
-                    "command_control_types": transcript.control_types,
-                    "command_binary_frame_count": transcript.binary_frame_count,
-                    "command_output_raw": command_raw,
-                    "command_output_text": command_text,
-                    "command_stdout_text": command_without_markers,
-                    "idle_timeout": transcript.idle_timeout,
-                    "connection_closed": transcript.connection_closed,
-                    **session.snapshot(),
-                }
-            )
-            if transcript.close_reason:
-                result["close_reason"] = transcript.close_reason
-
-        if transcript.connection_closed:
-            await self._drop_session_if_present(session_handle)
-            closed_snapshot = await self._close_detached_session(
-                session,
-                close_reason="remote_closed",
-            )
-            result["token_cleanup"] = closed_snapshot["token_cleanup"]
-            result["close_reason"] = closed_snapshot["close_reason"]
-            result["closed"] = closed_snapshot["closed"]
-            result["closed_at"] = closed_snapshot["closed_at"]
-            if closed_snapshot["token_cleanup_error"]:
-                result["token_cleanup_error"] = closed_snapshot["token_cleanup_error"]
-
+        result = await self.execute_command_in_session(
+            session_handle,
+            command=command,
+            command_idle_timeout_seconds=command_idle_timeout_seconds,
+            total_timeout_seconds=total_timeout_seconds,
+            opened_payload=opened_payload,
+        )
+        result.update(
+            {
+                "asset_id": asset_id,
+                "account": account,
+                "protocol": protocol,
+                "connect_method": connect_method,
+            }
+        )
         LOGGER.info(
             "Executed command through managed KoKo session %s for asset %s (reused=%s).",
             session_handle,
             asset_id,
             result["reused_existing"],
+        )
+        return result
+
+    async def execute_command_in_session(
+        self,
+        session_handle: str,
+        *,
+        command: str,
+        command_idle_timeout_seconds: float = 1.5,
+        total_timeout_seconds: float = 20.0,
+        opened_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not command.strip():
+            raise KoKoProbeError("The KoKo terminal command must not be empty.")
+        session = await self._require_session(session_handle)
+        result = await self._execute_command_with_session(
+            session,
+            session_handle=session_handle,
+            command=command,
+            command_idle_timeout_seconds=command_idle_timeout_seconds,
+            total_timeout_seconds=total_timeout_seconds,
+            opened_payload=opened_payload,
+        )
+        LOGGER.info(
+            "Executed command through existing managed KoKo session %s.",
+            session_handle,
         )
         return result
 
@@ -643,6 +586,114 @@ class TerminalSessionManager:
             await terminal.close()
         except Exception:
             LOGGER.exception("Failed to close KoKo terminal after an unsuccessful open attempt.")
+
+    async def _execute_command_with_session(
+        self,
+        session: ManagedTerminalSession,
+        *,
+        session_handle: str,
+        command: str,
+        command_idle_timeout_seconds: float,
+        total_timeout_seconds: float,
+        opened_payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        start_marker = f"__MCP_JMS_COMMAND_START_{uuid4().hex}__"
+        end_marker = f"__MCP_JMS_EXIT_STATUS_{uuid4().hex}__"
+        result: dict[str, Any] = {
+            "command": command,
+            "ws_connected": True,
+            "command_sent": False,
+            "exit_status": None,
+            "session_handle": session_handle,
+            "opened": bool(opened_payload.get("opened")) if opened_payload else False,
+            "reused_existing": bool(opened_payload.get("reused_existing")) if opened_payload else True,
+            "max_terminal_sessions": self._max_sessions,
+        }
+        if opened_payload:
+            for field in (
+                "active_session_count",
+                "shell_prompt",
+                "remote_terminal_id",
+                "remote_session_id",
+                "connect_summary",
+                "created_at",
+                "last_activity_at",
+                "idle_timeout_seconds",
+                "idle_seconds",
+                "expires_in_seconds",
+                "target_key",
+            ):
+                if field in opened_payload:
+                    result[field] = opened_payload[field]
+            if opened_payload.get("opened"):
+                for field in (
+                    "startup_control_types",
+                    "startup_binary_frame_count",
+                    "startup_output_raw",
+                    "startup_output_text",
+                    "startup_stdout_text",
+                ):
+                    if field in opened_payload:
+                        result[field] = opened_payload[field]
+        else:
+            result.update(session.snapshot())
+            result["active_session_count"] = await self._active_session_count()
+
+        async with session._lock:
+            script = build_exec_script(command, start_marker, end_marker, exit_shell=False)
+            await session.terminal.send_terminal_data(script)
+            session.pending_inputs.append(normalize_terminal_text(script))
+            result["command_sent"] = True
+            transcript = await session.terminal.drain_until_idle(
+                idle_timeout_seconds=command_idle_timeout_seconds,
+                total_timeout_seconds=total_timeout_seconds,
+            )
+            session.touch()
+            command_raw = normalize_terminal_text(transcript.raw_text())
+            command_text = strip_ansi_sequences(command_raw)
+            detected_prompt = detect_shell_prompt(command_text)
+            if detected_prompt:
+                session.shell_prompt = detected_prompt
+            prompt_stripped = strip_shell_prompt(command_text, session.shell_prompt)
+            stdout_text, remaining_inputs = strip_pending_input_echoes(
+                prompt_stripped,
+                session.pending_inputs,
+            )
+            session.pending_inputs = remaining_inputs
+            exit_status, command_without_markers = extract_between_markers(
+                stdout_text,
+                start_marker=start_marker,
+                end_marker=end_marker,
+            )
+            result.update(
+                {
+                    "exit_status": exit_status,
+                    "command_control_types": transcript.control_types,
+                    "command_binary_frame_count": transcript.binary_frame_count,
+                    "command_output_raw": command_raw,
+                    "command_output_text": command_text,
+                    "command_stdout_text": command_without_markers,
+                    "idle_timeout": transcript.idle_timeout,
+                    "connection_closed": transcript.connection_closed,
+                    **session.snapshot(),
+                }
+            )
+            if transcript.close_reason:
+                result["close_reason"] = transcript.close_reason
+
+        if transcript.connection_closed:
+            await self._drop_session_if_present(session_handle)
+            closed_snapshot = await self._close_detached_session(
+                session,
+                close_reason="remote_closed",
+            )
+            result["token_cleanup"] = closed_snapshot["token_cleanup"]
+            result["close_reason"] = closed_snapshot["close_reason"]
+            result["closed"] = closed_snapshot["closed"]
+            result["closed_at"] = closed_snapshot["closed_at"]
+            if closed_snapshot["token_cleanup_error"]:
+                result["token_cleanup_error"] = closed_snapshot["token_cleanup_error"]
+        return result
 
 
 _TERMINAL_SESSION_MANAGER = TerminalSessionManager()

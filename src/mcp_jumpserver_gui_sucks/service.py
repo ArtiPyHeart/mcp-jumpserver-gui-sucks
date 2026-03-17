@@ -65,6 +65,44 @@ def build_paths_payload(settings: Settings | None = None) -> dict[str, Any]:
     }
 
 
+async def build_terminal_usage_guide_payload() -> dict[str, Any]:
+    settings = Settings.from_env()
+    manager = get_terminal_session_manager()
+    await manager.prepare(settings)
+    sessions = await manager.list_sessions()
+    return {
+        "summary": (
+            "For multi-step work on one machine, keep one shell open, reuse its session_handle, "
+            "and close it explicitly when the task is done."
+        ),
+        "recommended_order": [
+            "Call jms_status first when you are unsure whether terminal auth is still valid.",
+            "Call jms_terminal_usage_guide once at the start of a terminal-heavy task.",
+            "Call jms_acquire_terminal_session with asset_ref and account_ref to get or reuse one managed shell.",
+            "Use jms_execute_in_terminal_session for repeated commands on the same machine.",
+            "Call jms_close_terminal_session when the task is complete.",
+        ],
+        "preferred_tools": {
+            "guide": "jms_terminal_usage_guide",
+            "acquire": "jms_acquire_terminal_session",
+            "execute": "jms_execute_in_terminal_session",
+            "close": "jms_close_terminal_session",
+        },
+        "one_shot_fallback": "jms_execute_koko_command",
+        "anti_patterns": [
+            "Do not repeatedly open new shells for every command on the same target.",
+            "Do not leave managed shells idle after a task is complete when you already know the work is done.",
+            "Do not call jms_execute_koko_command in a loop when a session_handle already exists.",
+        ],
+        "defaults": {
+            "terminal_idle_timeout_seconds": settings.terminal_idle_timeout_seconds,
+            "terminal_reap_interval_seconds": settings.terminal_reap_interval_seconds,
+            "max_terminal_sessions": settings.max_terminal_sessions,
+        },
+        "active_sessions": sessions,
+    }
+
+
 def load_runtime() -> tuple[Settings, SessionStore, AuthState | None]:
     settings = Settings.from_env()
     store = SessionStore(settings.state_file)
@@ -771,6 +809,42 @@ async def execute_koko_command_payload(
     return payload
 
 
+async def acquire_terminal_session_payload(
+    *,
+    asset_ref: str,
+    account_ref: str = "",
+    protocol: str = "ssh",
+    connect_method: str = "web_cli",
+    cols: int = 120,
+    rows: int = 32,
+    startup_idle_timeout_seconds: float = 1.5,
+) -> dict[str, Any]:
+    settings, _, auth_state, terminal_auth = await ensure_terminal_auth_state(
+        force_refresh=True,
+    )
+    resolved_asset_id, resolved_account_id, resolved_target = await resolve_terminal_tool_target(
+        asset_ref=asset_ref,
+        account_ref=account_ref,
+        protocol=protocol,
+    )
+    manager = get_terminal_session_manager()
+    payload = await manager.open_session(
+        settings,
+        auth_state,
+        asset_id=resolved_asset_id,
+        account=resolved_account_id,
+        protocol=protocol,
+        connect_method=connect_method,
+        cols=cols,
+        rows=rows,
+        startup_idle_timeout_seconds=startup_idle_timeout_seconds,
+        reuse_existing=True,
+    )
+    payload["resolved_target"] = resolved_target
+    payload["terminal_auth"] = terminal_auth
+    return payload
+
+
 async def list_terminal_sessions_payload() -> dict[str, Any]:
     settings = Settings.from_env()
     manager = get_terminal_session_manager()
@@ -854,6 +928,24 @@ async def read_terminal_session_payload(
     return await manager.read_session(
         session_handle,
         idle_timeout_seconds=idle_timeout_seconds,
+        total_timeout_seconds=total_timeout_seconds,
+    )
+
+
+async def execute_in_terminal_session_payload(
+    *,
+    session_handle: str,
+    command: str,
+    command_idle_timeout_seconds: float = 1.5,
+    total_timeout_seconds: float = 20.0,
+) -> dict[str, Any]:
+    settings = Settings.from_env()
+    manager = get_terminal_session_manager()
+    await manager.prepare(settings)
+    return await manager.execute_command_in_session(
+        session_handle,
+        command=command,
+        command_idle_timeout_seconds=command_idle_timeout_seconds,
         total_timeout_seconds=total_timeout_seconds,
     )
 

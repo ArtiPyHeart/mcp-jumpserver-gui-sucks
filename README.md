@@ -105,6 +105,17 @@ uvx mcp-jumpserver-gui-sucks serve
 
 `serve` defaults to `stdio`, which is the correct transport for Codex and Claude desktop-style MCP clients.
 
+## Recommended Agent Terminal Workflow
+
+When a coding agent plans to work on one machine for more than one command, the recommended workflow is:
+
+1. Call `jms_terminal_usage_guide`.
+2. Call `jms_acquire_terminal_session` with `asset_ref` and `account_ref`.
+3. Reuse the returned `session_handle` through repeated `jms_execute_in_terminal_session` calls.
+4. Call `jms_close_terminal_session` when the task is complete.
+
+This keeps one KoKo shell open per target and avoids leaving many short-lived web-shell records behind in JumpServer.
+
 ### Codex (`~/.codex/config.toml`)
 
 This matches the `mcp_servers.*` structure already used in your local `~/.codex/config.toml`:
@@ -211,6 +222,7 @@ After Trusted Publishing is configured once, later pushes to `main` that bump `p
 
 - `jms_paths`
 - `jms_status`
+- `jms_terminal_usage_guide`
 - `jms_profile`
 - `jms_list_nodes`
 - `jms_list_assets`
@@ -224,16 +236,21 @@ After Trusted Publishing is configured once, later pushes to `main` that bump `p
 - `jms_refresh_terminal_auth`
 - `jms_probe_koko_terminal`
 - `jms_execute_koko_command`
+- `jms_acquire_terminal_session`
 - `jms_list_terminal_sessions`
 - `jms_open_terminal_session`
 - `jms_write_terminal_session`
 - `jms_read_terminal_session`
+- `jms_execute_in_terminal_session`
 - `jms_resize_terminal_session`
 - `jms_close_terminal_session`
 
 ## Operational Notes
 
 - Managed terminal sessions are process-local and intended to live only for the MCP server process lifetime.
+- `jms_terminal_usage_guide` returns the preferred terminal workflow for coding agents and should be consulted at the start of terminal-heavy work.
+- `jms_acquire_terminal_session` is the preferred high-level entrypoint for repeated work on one machine because it resolves the target and reuses an existing shell when possible.
+- `jms_execute_in_terminal_session` is the preferred way to run repeated commands after a `session_handle` has already been acquired.
 - `jms_execute_koko_command` now reuses a matching managed shell for the same asset/account/protocol/connect-method target when one is already active in the current MCP server process.
 - `jms_execute_koko_command` returns the managed `session_handle`, so callers can later use `jms_close_terminal_session` for an explicit manual shutdown.
 - The default managed shell idle timeout is 1 hour. Override it with `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS` if a different retention window is required.
