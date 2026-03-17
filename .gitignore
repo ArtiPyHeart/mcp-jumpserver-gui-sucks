@@ -313,3 +313,4 @@ cython_debug/
 #.idea/
 /mcp-jumpserver-gui-sucks-development-plan.md
 /uv.lock
+/scripts/

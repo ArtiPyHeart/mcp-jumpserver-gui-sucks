@@ -58,6 +58,8 @@ Do not put live session secrets, cookies, or MFA values into MCP client config f
 3. Let the tool persist auth state into the user-scoped application state directory.
 4. Start the MCP server from Codex or Claude.
 
+When the live JumpServer deployment enables a login captcha challenge, the CLI login command saves the captcha image under `/private/tmp/` and opens it with the system image viewer before prompting for the captcha value in the terminal.
+
 By default, persisted auth state lives under the platform-specific user application state directory:
 
 - macOS example: `~/Library/Application Support/mcp-jumpserver-gui-sucks/auth-state.json`

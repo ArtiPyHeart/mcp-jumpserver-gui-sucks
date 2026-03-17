@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from .auth_state import AuthState, build_cookie_state_from_jar
+from .captcha import fetch_captcha_challenge, save_and_open_captcha_challenge
 from .client import JumpServerClient
 from .config import Settings
 from .crypto import encrypt_password
@@ -176,6 +177,7 @@ class JumpServerCLILogin:
         self._settings = settings
         self._base_url = base_url.rstrip("/")
         self._org_id = org_id.strip()
+        self._last_login_page_html = ""
         self._client = httpx.Client(
             base_url=self._base_url,
             timeout=self._settings.request_timeout_seconds,
@@ -193,6 +195,7 @@ class JumpServerCLILogin:
         LOGGER.info("Bootstrapping CLI login session.")
         response = self._client.get(LOGIN_PAGE_PATH)
         raise_for_unexpected_status(response, {200})
+        self._last_login_page_html = response.text
 
         cookie_names = {cookie.name for cookie in self._client.cookies.jar}
         if "jms_public_key" not in cookie_names:
@@ -207,6 +210,30 @@ class JumpServerCLILogin:
         org_cookie = self._client.cookies.get("X-JMS-ORG")
         if org_cookie and not self._client.headers.get("X-JMS-ORG"):
             self._client.headers["X-JMS-ORG"] = org_cookie
+
+    def _prompt_login_captcha_fields(self) -> dict[str, str]:
+        if not self._last_login_page_html:
+            return {}
+
+        challenge = fetch_captcha_challenge(self._client, self._last_login_page_html)
+        if challenge is None:
+            return {}
+
+        LOGGER.info("Captcha challenge detected for the CLI web login flow.")
+        saved_path, open_error = save_and_open_captcha_challenge(challenge)
+        print(f"Captcha challenge image saved to {saved_path}")
+        if open_error:
+            print(f"Could not open the captcha image automatically: {open_error}")
+        else:
+            print("Opened the captcha image in the system viewer.")
+
+        captcha_code = input("Enter captcha: ").strip()
+        if not captcha_code:
+            raise LoginFlowError("Missing captcha value.")
+        return {
+            "captcha_0": challenge.key,
+            "captcha_1": captcha_code,
+        }
 
     def _absolute_url(self, path: str) -> str:
         return urljoin(f"{self._base_url}/", path.lstrip("/"))
@@ -250,6 +277,7 @@ class JumpServerCLILogin:
             "username": username,
             "password": encrypted_password,
         }
+        payload.update(self._prompt_login_captcha_fields())
         if auto_login:
             payload["auto_login"] = "on"
         response = self._client.post(
@@ -260,6 +288,7 @@ class JumpServerCLILogin:
         )
         raise_for_unexpected_status(response, {200, 302})
         if response.status_code == 200:
+            self._last_login_page_html = response.text
             form_errors = extract_form_errors(response.text)
             detail = f" Errors: {form_errors}" if form_errors else ""
             raise LoginFlowError(f"Web login form was rejected.{detail}")
