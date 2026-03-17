@@ -15,6 +15,7 @@ The main CLI and MCP chain is working against a real JumpServer instance:
 - KoKo 443 WebSocket probing
 - one-shot remote command execution through KoKo
 - managed multi-turn terminal sessions for MCP-driven shell interaction
+- managed shell reuse for repeated command execution against the same asset/account target
 - process-local terminal idle reaping and session-cap enforcement
 - explicit cookie-session refresh probing before terminal work
 - a line-oriented CLI shell for non-MCP interactive terminal use
@@ -117,7 +118,7 @@ startup_timeout_sec = 60.0
 [mcp_servers.mcp-jumpserver-gui-sucks.env]
 MCP_JUMPSERVER_GUI_SUCKS_BASE_URL = "https://jumpserver.example.com"
 MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS = "true"
-MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS = "900"
+MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS = "3600"
 MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS = "30"
 MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS = "8"
 
@@ -140,7 +141,7 @@ This matches the `mcpServers` JSON shape already present in your local `~/.claud
       "env": {
         "MCP_JUMPSERVER_GUI_SUCKS_BASE_URL": "https://jumpserver.example.com",
         "MCP_JUMPSERVER_GUI_SUCKS_VERIFY_TLS": "true",
-        "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS": "900",
+        "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS": "3600",
         "MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_REAP_INTERVAL_SECONDS": "30",
         "MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS": "8"
       }
@@ -233,6 +234,10 @@ After Trusted Publishing is configured once, later pushes to `main` that bump `p
 ## Operational Notes
 
 - Managed terminal sessions are process-local and intended to live only for the MCP server process lifetime.
+- `jms_execute_koko_command` now reuses a matching managed shell for the same asset/account/protocol/connect-method target when one is already active in the current MCP server process.
+- `jms_execute_koko_command` returns the managed `session_handle`, so callers can later use `jms_close_terminal_session` for an explicit manual shutdown.
+- The default managed shell idle timeout is 1 hour. Override it with `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS` if a different retention window is required.
+- When the MCP server process exits normally, it closes all managed KoKo shells before returning.
 - `terminal-shell` is line-oriented, not a full raw TTY emulator.
 - Terminal entrypoints preflight the cookie-backed web session before opening KoKo.
 - If the cookie-backed session is already invalid, terminal calls fail early with an explicit re-login requirement instead of a low-level websocket failure.

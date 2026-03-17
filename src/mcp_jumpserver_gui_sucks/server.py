@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -27,6 +29,7 @@ from .service import (
     write_terminal_session_payload,
     close_terminal_session_payload,
 )
+from .terminal_manager import get_terminal_session_manager
 
 mcp = FastMCP(
     name="mcp-jumpserver-gui-sucks",
@@ -172,7 +175,7 @@ async def jms_execute_koko_command(
     command_idle_timeout_seconds: float = 1.5,
     total_timeout_seconds: float = 20.0,
 ) -> dict[str, Any]:
-    """Run one terminal command through KoKo Web CLI using a concrete account ID or a user-facing account reference."""
+    """Run one terminal command through KoKo Web CLI, reusing a matching managed shell when one already exists."""
     return await execute_koko_command_payload(
         asset_id=asset_id,
         account=account,
@@ -270,4 +273,10 @@ async def jms_close_terminal_session(session_handle: str) -> dict[str, Any]:
 
 
 def run_server(*, transport: str = "stdio") -> None:
-    mcp.run(transport=transport)
+    try:
+        mcp.run(transport=transport)
+    finally:
+        with contextlib.suppress(Exception):
+            asyncio.run(
+                get_terminal_session_manager().close_all_sessions(close_reason="process_exit")
+            )

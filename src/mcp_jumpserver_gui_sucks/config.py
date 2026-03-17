@@ -94,8 +94,8 @@ class Settings:
                 minimum=1.0,
             ),
             terminal_idle_timeout_seconds=parse_float(
-                os.getenv(TERMINAL_IDLE_TIMEOUT_ENV_NAME, "900"),
-                default=900.0,
+                os.getenv(TERMINAL_IDLE_TIMEOUT_ENV_NAME, "3600"),
+                default=3600.0,
                 minimum=1.0,
             ),
             terminal_reap_interval_seconds=parse_float(

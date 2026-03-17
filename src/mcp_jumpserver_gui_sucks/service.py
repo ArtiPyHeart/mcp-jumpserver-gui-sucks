@@ -26,7 +26,6 @@ from .config import (
 )
 from .errors import MissingAuthStateError, TargetResolutionError
 from .koko import probe_koko_terminal
-from .koko import execute_koko_command
 from .session_store import SessionStore
 from .terminal_manager import get_terminal_session_manager
 
@@ -751,7 +750,8 @@ async def execute_koko_command_payload(
         account_ref=account,
         protocol=protocol,
     )
-    payload = await execute_koko_command(
+    manager = get_terminal_session_manager()
+    payload = await manager.execute_command(
         settings,
         auth_state,
         asset_id=resolved_asset_id,
@@ -764,6 +764,7 @@ async def execute_koko_command_payload(
         startup_idle_timeout_seconds=startup_idle_timeout_seconds,
         command_idle_timeout_seconds=command_idle_timeout_seconds,
         total_timeout_seconds=total_timeout_seconds,
+        reuse_existing=True,
     )
     payload["resolved_target"] = resolved_target
     payload["terminal_auth"] = terminal_auth

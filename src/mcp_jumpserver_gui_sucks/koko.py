@@ -358,7 +358,13 @@ class KoKoTerminalSession:
                 self._cleanup_state = "expired"
 
 
-def build_exec_script(command: str, start_marker: str, end_marker: str) -> str:
+def build_exec_script(
+    command: str,
+    start_marker: str,
+    end_marker: str,
+    *,
+    exit_shell: bool = True,
+) -> str:
     script = command
     if script.startswith("\n"):
         script = script.lstrip("\n")
@@ -372,7 +378,8 @@ def build_exec_script(command: str, start_marker: str, end_marker: str) -> str:
         f"printf '\\n{end_marker}:%s\\n' \"$status\"\n"
         "stty echo\n"
     )
-    script += "exit\n"
+    if exit_shell:
+        script += "exit\n"
     return script
 
 
@@ -514,7 +521,7 @@ async def execute_koko_command(
         prompt_text = detect_shell_prompt(result["startup_output_text"])
         result["shell_prompt"] = prompt_text
 
-        script = build_exec_script(command, start_marker, end_marker)
+        script = build_exec_script(command, start_marker, end_marker, exit_shell=True)
         await session.send_terminal_data(script)
         result["command_sent"] = True
 
