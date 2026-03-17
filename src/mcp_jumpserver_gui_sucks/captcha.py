@@ -52,7 +52,7 @@ def save_captcha_challenge(
     target_path = path or default_captcha_path(challenge.key)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_bytes(challenge.image_bytes)
-    LOGGER.info("Saved login captcha image to %s.", target_path)
+    LOGGER.debug("Saved login captcha image to %s.", target_path)
     return target_path
 
 
@@ -77,5 +77,5 @@ def save_and_open_captcha_challenge(
     if open_error:
         LOGGER.warning("Could not open the captcha image automatically: %s", open_error)
     else:
-        LOGGER.info("Opened the captcha image in the system viewer.")
+        LOGGER.debug("Opened the captcha image in the system viewer.")
     return saved_path, open_error

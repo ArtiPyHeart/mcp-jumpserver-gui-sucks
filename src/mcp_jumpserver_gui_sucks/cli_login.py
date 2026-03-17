@@ -34,8 +34,14 @@ UNSUPPORTED_CLI_MFA_TYPES = {"passkey", "face"}
 REDACTED = "<redacted>"
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 HTML_ERROR_PATTERNS = (
-    re.compile(r'<p[^>]*class="[^"]*red-fonts[^"]*"[^>]*>(.*?)</p>', re.IGNORECASE | re.DOTALL),
-    re.compile(r'<p[^>]*class="[^"]*help-block[^"]*"[^>]*>(.*?)</p>', re.IGNORECASE | re.DOTALL),
+    re.compile(
+        r'<(?:p|div)[^>]*class="[^"]*red-fonts[^"]*"[^>]*>(.*?)</(?:p|div)>',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r'<(?:p|div)[^>]*class="[^"]*help-block[^"]*"[^>]*>(.*?)</(?:p|div)>',
+        re.IGNORECASE | re.DOTALL,
+    ),
 )
 MFA_OPTION_RE = re.compile(r'<option value="([^"]+)"', re.IGNORECASE)
 SENSITIVE_KEYS = {
@@ -226,8 +232,9 @@ class JumpServerCLILogin:
             print(f"Could not open the captcha image automatically: {open_error}")
         else:
             print("Opened the captcha image in the system viewer.")
+        print("If the captcha image shows a math expression, enter the computed result.")
 
-        captcha_code = input("Enter captcha: ").strip()
+        captcha_code = input("Enter captcha answer: ").strip()
         if not captcha_code:
             raise LoginFlowError("Missing captcha value.")
         return {
@@ -291,7 +298,13 @@ class JumpServerCLILogin:
             self._last_login_page_html = response.text
             form_errors = extract_form_errors(response.text)
             detail = f" Errors: {form_errors}" if form_errors else ""
-            raise LoginFlowError(f"Web login form was rejected.{detail}")
+            hint = ""
+            if not form_errors and "captcha_1" in response.text:
+                hint = (
+                    " Hint: if the captcha image shows a math expression, "
+                    "enter the computed result instead of the visible formula."
+                )
+            raise LoginFlowError(f"Web login form was rejected.{detail}{hint}")
         return self._normalize_location(response.headers.get("location", ""))
 
     def fetch_web_mfa_options(self) -> list[str]:
