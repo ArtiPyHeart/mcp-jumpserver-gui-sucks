@@ -4,6 +4,7 @@
 
 # User-specific stuff
 extern
+.trash/
 .idea
 .idea/**/workspace.xml
 .idea/**/tasks.xml
