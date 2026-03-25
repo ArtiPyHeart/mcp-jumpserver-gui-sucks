@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 from typing import Sequence
@@ -16,14 +17,15 @@ from .service import (
     build_paths_payload,
     build_status_payload,
     close_terminal_session_payload,
-    execute_koko_command_payload,
-    open_terminal_session_payload,
     probe_koko_terminal_payload,
     refresh_terminal_auth_payload,
-    read_terminal_session_payload,
     resolve_terminal_target_payload,
     resize_terminal_session_payload,
-    write_terminal_session_payload,
+    acquire_terminal_session_payload,
+    interrupt_terminal_session_payload,
+    read_terminal_output_payload,
+    run_terminal_command_payload,
+    send_terminal_input_payload,
 )
 from .session_store import SessionStore
 
@@ -427,27 +429,37 @@ def koko_probe_command(args: argparse.Namespace) -> int:
 
 def terminal_exec_command(args: argparse.Namespace) -> int:
     asset_id, account_id, resolved_target = asyncio.run(resolve_terminal_target_args(args))
-    payload = asyncio.run(
-        execute_koko_command_payload(
-            asset_id=asset_id,
-            account=account_id,
-            command=args.remote_command,
+    opened = asyncio.run(
+        acquire_terminal_session_payload(
+            asset_ref=asset_id,
+            account_ref=account_id,
             protocol=args.protocol,
             connect_method=args.connect_method,
             cols=args.cols,
             rows=args.rows,
             startup_idle_timeout_seconds=args.startup_idle_timeout_seconds,
-            command_idle_timeout_seconds=args.command_idle_timeout_seconds,
-            total_timeout_seconds=args.total_timeout_seconds,
         )
     )
+    session_handle = str(opened["session_handle"])
+    try:
+        payload = asyncio.run(
+            run_terminal_command_payload(
+                session_handle=session_handle,
+                command=args.remote_command,
+                settle_timeout_seconds=args.command_idle_timeout_seconds,
+                total_timeout_seconds=args.total_timeout_seconds,
+            )
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            asyncio.run(close_terminal_session_payload(session_handle))
     if resolved_target:
         payload["resolved_target"] = resolved_target
     print_json(payload)
     exit_status = payload.get("exit_status")
     if isinstance(exit_status, int):
         return exit_status
-    return 0 if payload.get("ws_connected") and payload.get("command_sent") else 1
+    return 0 if payload.get("command_completed") else 1
 
 
 def print_terminal_text(text: str) -> None:
@@ -468,9 +480,9 @@ def print_terminal_shell_help() -> None:
 
 async def interactive_terminal_shell(args: argparse.Namespace) -> int:
     asset_id, account_id, resolved_target = await resolve_terminal_target_args(args)
-    opened = await open_terminal_session_payload(
-        asset_id=asset_id,
-        account=account_id,
+    opened = await acquire_terminal_session_payload(
+        asset_ref=asset_id,
+        account_ref=account_id,
         protocol=args.protocol,
         connect_method=args.connect_method,
         cols=args.cols,
@@ -494,20 +506,16 @@ async def interactive_terminal_shell(args: argparse.Namespace) -> int:
                 break
             except KeyboardInterrupt:
                 print()
-                await write_terminal_session_payload(
+                interrupted = await interrupt_terminal_session_payload(
                     session_handle=session_handle,
-                    data="\u0003",
-                    append_newline=False,
-                )
-                interrupted = await read_terminal_session_payload(
-                    session_handle=session_handle,
-                    idle_timeout_seconds=args.read_idle_timeout_seconds,
+                    signal="ctrl_c",
+                    settle_timeout_seconds=args.read_idle_timeout_seconds,
                     total_timeout_seconds=args.read_total_timeout_seconds,
                 )
                 print_terminal_text(
                     str(interrupted.get("stdout_text") or interrupted.get("output_text") or "")
                 )
-                if interrupted.get("session_closed"):
+                if interrupted.get("connection_closed"):
                     return 0
                 continue
 
@@ -521,7 +529,7 @@ async def interactive_terminal_shell(args: argparse.Namespace) -> int:
             if stripped == "/exit":
                 break
             if stripped == "/read":
-                read_payload = await read_terminal_session_payload(
+                read_payload = await read_terminal_output_payload(
                     session_handle=session_handle,
                     idle_timeout_seconds=args.read_idle_timeout_seconds,
                     total_timeout_seconds=args.read_total_timeout_seconds,
@@ -533,20 +541,16 @@ async def interactive_terminal_shell(args: argparse.Namespace) -> int:
                     return 0
                 continue
             if stripped == "/ctrl-c":
-                await write_terminal_session_payload(
+                read_payload = await interrupt_terminal_session_payload(
                     session_handle=session_handle,
-                    data="\u0003",
-                    append_newline=False,
-                )
-                read_payload = await read_terminal_session_payload(
-                    session_handle=session_handle,
-                    idle_timeout_seconds=args.read_idle_timeout_seconds,
+                    signal="ctrl_c",
+                    settle_timeout_seconds=args.read_idle_timeout_seconds,
                     total_timeout_seconds=args.read_total_timeout_seconds,
                 )
                 print_terminal_text(
                     str(read_payload.get("stdout_text") or read_payload.get("output_text") or "")
                 )
-                if read_payload.get("session_closed"):
+                if read_payload.get("connection_closed"):
                     return 0
                 continue
             if stripped.startswith("/resize "):
@@ -562,12 +566,12 @@ async def interactive_terminal_shell(args: argparse.Namespace) -> int:
                 print(f"Resized remote terminal to {parts[1]}x{parts[2]}.", flush=True)
                 continue
 
-            await write_terminal_session_payload(
+            await send_terminal_input_payload(
                 session_handle=session_handle,
                 data=command,
                 append_newline=True,
             )
-            read_payload = await read_terminal_session_payload(
+            read_payload = await read_terminal_output_payload(
                 session_handle=session_handle,
                 idle_timeout_seconds=args.read_idle_timeout_seconds,
                 total_timeout_seconds=args.read_total_timeout_seconds,

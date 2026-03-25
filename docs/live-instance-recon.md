@@ -58,6 +58,7 @@ Date: 2026-03-12
   - the session closed cleanly after sending `exit`
   - the cleaned `stdout_text` view could remove leading echoed command input while `output_text` preserved fuller shell context
   - later lifecycle validation also confirmed that idle sessions can be reaped automatically and that reads on expired handles fail explicitly
+  - the current implementation direction is to expose managed sessions through a non-blocking buffered-read model instead of a single blocking execute call
 - `GET /api/v1/authentication/user-session/` is not a reliable health probe under access-key auth on this instance. `GET /api/v1/users/profile/` is the better general-purpose authenticated probe.
 
 ## Relevant Authentication Endpoints Found in OpenAPI
@@ -162,6 +163,7 @@ The observed `node` query parameter behavior for asset listing is still not full
 - A CLI-derived web session is now sufficient to complete the KoKo websocket handshake on this instance.
 - A CLI-derived web session is also sufficient to execute a one-shot SSH shell command through KoKo on this instance.
 - A CLI-derived web session is also sufficient to keep a multi-turn KoKo shell session alive inside a resident MCP server process on this instance.
+- The current terminal redesign assumes that long-running commands must be interruptible with an explicit `Ctrl-C` style operation instead of forcing the caller to abandon the whole managed session.
 - The first useful MCP surface can be built on top of:
   - session status
   - current profile

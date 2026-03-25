@@ -151,6 +151,13 @@ This means a single authenticated web session should be able to support both:
 - send `TERMINAL_RESIZE`
 - close the session explicitly or by sending `exit`
 
+The current repository has since moved to a stricter managed-session model:
+
+- short command-style work should use a dedicated `run_terminal_command` path
+- shell-style interaction should use separate send/read steps
+- long-running commands must be interruptible without discarding the whole session
+- the managed session should not block other read or interrupt operations while one command is waiting on remote output
+
 16. The managed-session output model now deliberately keeps two text views:
 
 - `output_text`: a fuller cleaned transcript that still preserves prompt and echoed input context
@@ -166,6 +173,7 @@ This means a single authenticated web session should be able to support both:
 - idle sessions are reaped automatically after a configurable timeout
 - the manager enforces a configurable maximum number of concurrent sessions
 - once a session has been reaped, later reads and writes fail with an explicit expired-session error instead of reusing a stale handle
+- active command-running sessions are not treated as idle-reap candidates
 
 ## Confirmed Connect Methods
 
@@ -239,4 +247,11 @@ These points are strong implementation clues, but they are not yet a complete pr
 - For managed multi-turn terminal sessions, preserve both:
   - a fuller terminal transcript for debugging and prompt-awareness
   - a cleaned stdout-oriented text field for agent reasoning after each read step
+- Prefer the following MCP tool split over the older blocking execute/read/write mix:
+  - `jms_acquire_terminal_session`
+  - `jms_run_terminal_command`
+  - `jms_send_terminal_input`
+  - `jms_read_terminal_output`
+  - `jms_interrupt_terminal_session`
+  - `jms_close_terminal_session`
 - Keep terminal-session lifecycle configurable through environment variables rather than hard-coding timeout and concurrency limits.

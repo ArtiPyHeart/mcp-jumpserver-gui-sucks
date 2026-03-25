@@ -51,7 +51,7 @@ class TerminalAccountResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["created"])
         self.assertEqual(payload["token"]["account"], "account-uuid")
 
-    async def test_execute_koko_command_payload_resolves_account_reference(self) -> None:
+    async def test_acquire_terminal_session_payload_resolves_account_reference(self) -> None:
         resolved_target = {
             "asset": {"id": "asset-uuid", "name": "test-asset"},
             "account": {"id": "account-uuid", "username": "root"},
@@ -69,23 +69,50 @@ class TerminalAccountResolutionTests(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(Mock(), Mock(), Mock(), {"cookie_session_authenticated": True})),
             ),
             patch.object(
-                service,
-                "execute_koko_command",
-                AsyncMock(return_value={"ws_connected": True, "command_sent": True}),
-            ) as execute_mock,
+                service.get_terminal_session_manager(),
+                "open_session",
+                AsyncMock(return_value={"session_handle": "session-1", "opened": True}),
+            ) as open_mock,
         ):
-            payload = await service.execute_koko_command_payload(
-                asset_id="88fa41cf-c845-4efa-9b4b-534923b5a507",
-                account="test-root",
-                command="hostname",
+            payload = await service.acquire_terminal_session_payload(
+                asset_ref="88fa41cf-c845-4efa-9b4b-534923b5a507",
+                account_ref="test-root",
             )
 
-        execute_mock.assert_awaited_once()
-        _, kwargs = execute_mock.await_args
+        open_mock.assert_awaited_once()
+        _, kwargs = open_mock.await_args
         self.assertEqual(kwargs["asset_id"], "asset-uuid")
         self.assertEqual(kwargs["account"], "account-uuid")
         self.assertEqual(payload["resolved_target"], resolved_target)
         self.assertTrue(payload["terminal_auth"]["cookie_session_authenticated"])
+
+    async def test_run_terminal_command_payload_delegates_to_manager(self) -> None:
+        manager = service.get_terminal_session_manager()
+        settings = Mock()
+
+        with (
+            patch.object(service, "Settings") as settings_cls,
+            patch.object(manager, "prepare", AsyncMock()) as prepare_mock,
+            patch.object(
+                manager,
+                "run_command",
+                AsyncMock(return_value={"command_completed": True, "exit_status": 0}),
+            ) as run_mock,
+        ):
+            settings_cls.from_env.return_value = settings
+            payload = await service.run_terminal_command_payload(
+                session_handle="session-1",
+                command="hostname",
+            )
+
+        prepare_mock.assert_awaited_once_with(settings)
+        run_mock.assert_awaited_once_with(
+            "session-1",
+            command="hostname",
+            settle_timeout_seconds=1.5,
+            total_timeout_seconds=20.0,
+        )
+        self.assertEqual(payload["exit_status"], 0)
 
 
 class TerminalCliResolutionTests(unittest.IsolatedAsyncioTestCase):

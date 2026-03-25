@@ -40,6 +40,8 @@ class Transcript:
     idle_timeout: bool = False
     connection_closed: bool = False
     close_reason: str = ""
+    from_seq: int = 0
+    next_seq: int = 0
 
     def append_text(self, text: str) -> None:
         if text:
@@ -47,6 +49,17 @@ class Transcript:
 
     def raw_text(self) -> str:
         return "".join(self.text_chunks)
+
+
+@dataclass(slots=True)
+class BufferedTerminalEvent:
+    seq: int
+    text: str = ""
+    control_type: str = ""
+    control_payload: dict[str, Any] | None = None
+    binary_frame_count: int = 0
+    connection_closed: bool = False
+    close_reason: str = ""
 
 
 def build_cookie_header(auth_state: AuthState) -> str:
@@ -139,9 +152,15 @@ class KoKoTerminalSession:
         self._session_id = ""
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._reader_task: asyncio.Task[None] | None = None
         self._cleanup_state = "not_attempted"
         self._cleanup_error = ""
         self._connect_info: dict[str, Any] = {}
+        self._condition = asyncio.Condition()
+        self._events: list[BufferedTerminalEvent] = []
+        self._next_seq = 1
+        self._connection_closed = False
+        self._close_reason = ""
 
     @property
     def token_id(self) -> str:
@@ -166,6 +185,20 @@ class KoKoTerminalSession:
     @property
     def connect_info(self) -> dict[str, Any]:
         return self._connect_info
+
+    @property
+    def close_reason(self) -> str:
+        return self._close_reason
+
+    @property
+    def connection_closed(self) -> bool:
+        return self._connection_closed
+
+    def current_seq(self) -> int:
+        return self._next_seq - 1
+
+    def buffered_output_bytes(self) -> int:
+        return sum(len(event.text.encode("utf-8", "replace")) for event in self._events)
 
     async def open(self) -> None:
         if not self._auth_state.has_cookie_auth():
@@ -205,6 +238,7 @@ class KoKoTerminalSession:
         await self._await_connect()
         await self._send_init()
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self._reader_task = asyncio.create_task(self._reader_loop())
 
     async def _await_connect(self) -> None:
         deadline = monotonic() + self._settings.request_timeout_seconds
@@ -250,6 +284,60 @@ class KoKoTerminalSession:
             except Exception:
                 return
 
+    async def _reader_loop(self) -> None:
+        try:
+            while True:
+                message = await self._ws.recv()
+                await self._record_message(message)
+        except asyncio.CancelledError:
+            raise
+        except ConnectionClosed as exc:
+            await self._mark_closed(f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            await self._mark_closed(f"{type(exc).__name__}: {exc}")
+
+    async def _record_message(self, message: str | bytes) -> None:
+        event: BufferedTerminalEvent | None = None
+        if isinstance(message, bytes):
+            event = BufferedTerminalEvent(
+                seq=self._next_seq,
+                text=self._decoder.decode(message),
+                binary_frame_count=1,
+            )
+        else:
+            payload = self._parse_text_frame(message)
+            message_type = str(payload.get("type", "UNKNOWN"))
+            text = ""
+            if message_type == "TERMINAL_SESSION":
+                self._session_id = self._extract_session_id(payload)
+            elif message_type == "CONNECT" and not self._terminal_id:
+                self._terminal_id = str(payload.get("id", ""))
+            elif message_type in {"CLOSE", "ERROR", "TERMINAL_ERROR"}:
+                err = payload.get("err") or payload.get("data") or ""
+                if err:
+                    text = f"\n{err}\n"
+                self._connection_closed = True
+                self._close_reason = message_type
+            event = BufferedTerminalEvent(
+                seq=self._next_seq,
+                text=text,
+                control_type=message_type,
+                control_payload=payload,
+                connection_closed=self._connection_closed,
+                close_reason=self._close_reason,
+            )
+
+        async with self._condition:
+            self._events.append(event)
+            self._next_seq += 1
+            self._condition.notify_all()
+
+    async def _mark_closed(self, close_reason: str) -> None:
+        self._connection_closed = True
+        self._close_reason = close_reason
+        async with self._condition:
+            self._condition.notify_all()
+
     async def send_terminal_data(self, text: str) -> None:
         if self._ws is None:
             raise KoKoProbeError("KoKo websocket is not open.")
@@ -267,47 +355,68 @@ class KoKoTerminalSession:
         *,
         idle_timeout_seconds: float,
         total_timeout_seconds: float,
+        after_seq: int | None = None,
     ) -> Transcript:
-        transcript = Transcript()
+        start_seq = self.current_seq() if after_seq is None else max(0, after_seq)
+        transcript = Transcript(from_seq=start_seq, next_seq=start_seq)
         deadline = monotonic() + total_timeout_seconds
-        close_grace_deadline: float | None = None
+        current_seq = start_seq
+
         while True:
-            if close_grace_deadline is not None:
-                deadline = min(deadline, close_grace_deadline)
+            events = await self._events_after(current_seq)
+            if events:
+                for event in events:
+                    transcript.next_seq = event.seq
+                    if event.text:
+                        transcript.append_text(event.text)
+                    if event.binary_frame_count:
+                        transcript.binary_frame_count += event.binary_frame_count
+                    if event.control_type:
+                        transcript.control_types.append(event.control_type)
+                    if event.control_payload:
+                        transcript.control_payloads.append(event.control_payload)
+                    if event.connection_closed:
+                        transcript.connection_closed = True
+                        transcript.close_reason = event.close_reason
+                current_seq = transcript.next_seq
+                if transcript.connection_closed:
+                    return transcript
+
+            if self._connection_closed:
+                transcript.connection_closed = True
+                transcript.close_reason = self._close_reason
+                return transcript
+
             remaining_total = deadline - monotonic()
             if remaining_total <= 0:
                 return transcript
-            timeout = min(idle_timeout_seconds, remaining_total)
-            try:
-                message = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
-            except TimeoutError:
+
+            got_activity = await self._wait_for_activity(
+                after_seq=current_seq,
+                timeout=min(idle_timeout_seconds, remaining_total),
+            )
+            if not got_activity:
                 transcript.idle_timeout = not transcript.connection_closed
                 return transcript
-            except ConnectionClosed as exc:
-                transcript.connection_closed = True
-                transcript.close_reason = f"{type(exc).__name__}: {exc}"
-                return transcript
 
-            if isinstance(message, bytes):
-                transcript.binary_frame_count += 1
-                transcript.append_text(self._decoder.decode(message))
-                continue
+    async def _events_after(self, after_seq: int) -> list[BufferedTerminalEvent]:
+        async with self._condition:
+            return [event for event in self._events if event.seq > after_seq]
 
-            payload = self._parse_text_frame(message)
-            message_type = str(payload.get("type", "UNKNOWN"))
-            transcript.control_types.append(message_type)
-            transcript.control_payloads.append(payload)
-            if message_type == "TERMINAL_SESSION":
-                self._session_id = self._extract_session_id(payload)
-            if message_type in {"CLOSE", "ERROR", "TERMINAL_ERROR"}:
-                transcript.connection_closed = True
-                err = payload.get("err") or payload.get("data") or ""
-                if err:
-                    transcript.append_text(f"\n{err}\n")
-                close_grace_deadline = monotonic() + 1.0
-                continue
-            if message_type == "CONNECT" and not self._terminal_id:
-                self._terminal_id = str(payload.get("id", ""))
+    async def _wait_for_activity(self, *, after_seq: int, timeout: float) -> bool:
+        async with self._condition:
+            if self._next_seq - 1 > after_seq or self._connection_closed:
+                return True
+            try:
+                await asyncio.wait_for(
+                    self._condition.wait_for(
+                        lambda: (self._next_seq - 1) > after_seq or self._connection_closed
+                    ),
+                    timeout=timeout,
+                )
+                return True
+            except TimeoutError:
+                return False
 
     def _parse_text_frame(self, message: str) -> dict[str, Any]:
         try:
@@ -340,10 +449,18 @@ class KoKoTerminalSession:
                 await self._heartbeat_task
             self._heartbeat_task = None
 
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
+
         if self._ws is not None:
             with contextlib.suppress(Exception):
                 await self._ws.close()
             self._ws = None
+
+        await self._mark_closed(self._close_reason or "local_closed")
 
         if self._token_id:
             try:
@@ -371,12 +488,14 @@ def build_exec_script(
     if not script.endswith("\n"):
         script = f"{script}\n"
     script = (
+        "trap 'stty echo' EXIT INT TERM HUP\n"
         "stty -echo\n"
         f"printf '{start_marker}\\n'\n"
         f"{script}"
         "status=$?\n"
         f"printf '\\n{end_marker}:%s\\n' \"$status\"\n"
         "stty echo\n"
+        "trap - EXIT INT TERM HUP\n"
     )
     if exit_shell:
         script += "exit\n"
@@ -440,6 +559,7 @@ async def probe_koko_terminal(
         if session._ws is not None:
             result["agreed_subprotocol"] = session._ws.subprotocol
         transcript = await session.drain_until_idle(
+            after_seq=0,
             idle_timeout_seconds=message_timeout_seconds,
             total_timeout_seconds=message_timeout_seconds * max_messages,
         )
@@ -510,6 +630,7 @@ async def execute_koko_command(
             result["agreed_subprotocol"] = session._ws.subprotocol
 
         startup = await session.drain_until_idle(
+            after_seq=0,
             idle_timeout_seconds=startup_idle_timeout_seconds,
             total_timeout_seconds=max(3.0, startup_idle_timeout_seconds * 4),
         )
@@ -522,10 +643,12 @@ async def execute_koko_command(
         result["shell_prompt"] = prompt_text
 
         script = build_exec_script(command, start_marker, end_marker, exit_shell=True)
+        after_seq = session.current_seq()
         await session.send_terminal_data(script)
         result["command_sent"] = True
 
         command_transcript = await session.drain_until_idle(
+            after_seq=after_seq,
             idle_timeout_seconds=command_idle_timeout_seconds,
             total_timeout_seconds=total_timeout_seconds,
         )
