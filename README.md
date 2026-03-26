@@ -129,6 +129,7 @@ This matches the `mcp_servers.*` structure already used in your local `~/.codex/
 command = "uvx"
 args = ["mcp-jumpserver-gui-sucks", "serve"]
 startup_timeout_sec = 60.0
+tool_timeout_sec = 600.0
 
 [mcp_servers.mcp-jumpserver-gui-sucks.env]
 MCP_JUMPSERVER_GUI_SUCKS_BASE_URL = "https://jumpserver.example.com"
@@ -142,6 +143,8 @@ MCP_JUMPSERVER_GUI_SUCKS_MAX_TERMINAL_SESSIONS = "8"
 # MCP_JUMPSERVER_GUI_SUCKS_STATE_FILE = "/Users/alice/Library/Application Support/mcp-jumpserver-gui-sucks/auth-state.json"
 # MCP_JUMPSERVER_GUI_SUCKS_ORG_ID = "00000000-0000-0000-0000-000000000002"
 ```
+
+`tool_timeout_sec` is a Codex-side MCP client setting. If it is omitted, Codex falls back to its own default per-tool timeout. Increase it when the agent may need to keep a single `jms_*` call open for longer-running terminal work. For terminal commands, pair it with a larger `total_timeout_seconds` on the specific `jms_run_terminal_command` or `jms_execute_in_terminal_session` call when needed.
 
 ### Claude (`~/.claude.json`)
 
