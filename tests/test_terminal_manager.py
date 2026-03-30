@@ -145,6 +145,23 @@ class TerminalManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.status, "idle")
         self.assertEqual(session.terminal.sent_data, ["\u0003"])
 
+    async def test_interrupt_accepts_sigint_alias(self) -> None:
+        manager = TerminalSessionManager()
+        session = self.make_session(manager)
+        session.start_command("command-1")
+
+        payload = await manager.interrupt_session(
+            "session-1",
+            signal="SIGINT",
+            settle_timeout_seconds=0.1,
+            total_timeout_seconds=0.5,
+        )
+
+        self.assertTrue(payload["interrupted"])
+        self.assertEqual(payload["signal"], "ctrl_c")
+        self.assertEqual(session.status, "idle")
+        self.assertEqual(session.terminal.sent_data, ["\u0003"])
+
     async def test_collect_expired_sessions_skips_busy_sessions(self) -> None:
         manager = TerminalSessionManager()
         session = self.make_session(manager)

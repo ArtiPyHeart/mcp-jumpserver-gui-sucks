@@ -259,6 +259,7 @@ After Trusted Publishing is configured once, later pushes to `main` that bump `p
 - `jms_run_terminal_command` is the preferred path for short command execution on an already acquired `session_handle`.
 - `jms_send_terminal_input` plus `jms_read_terminal_output` are the preferred path for shell-style interaction and incremental polling.
 - `jms_interrupt_terminal_session` is the supported way to stop a running managed-session command without throwing away the shell immediately.
+- `jms_interrupt_terminal_session` accepts `ctrl_c` and the common alias `SIGINT`; both normalize to the same Ctrl+C behavior.
 - The default managed shell idle timeout is 1 hour. Override it with `MCP_JUMPSERVER_GUI_SUCKS_TERMINAL_IDLE_TIMEOUT_SECONDS` if a different retention window is required.
 - When the MCP server process exits normally, it closes all managed KoKo shells before returning.
 - `terminal-shell` is line-oriented, not a full raw TTY emulator.

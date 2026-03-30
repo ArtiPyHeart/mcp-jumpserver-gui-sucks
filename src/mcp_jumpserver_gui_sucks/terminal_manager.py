@@ -31,6 +31,18 @@ def utc_now() -> str:
     return datetime.now(tz=UTC).isoformat()
 
 
+def normalize_interrupt_signal(signal: str) -> str:
+    normalized_signal = signal.strip().lower().replace("-", "_")
+    signal_aliases = {
+        "ctrl_c": "ctrl_c",
+        "sigint": "ctrl_c",
+    }
+    try:
+        return signal_aliases[normalized_signal]
+    except KeyError as exc:
+        raise KoKoProbeError(f"Unsupported interrupt signal: {signal!r}") from exc
+
+
 @dataclass(slots=True)
 class ManagedTerminalSession:
     handle: str
@@ -485,9 +497,7 @@ class TerminalSessionManager:
         settle_timeout_seconds: float = 1.0,
         total_timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
-        normalized_signal = signal.strip().lower()
-        if normalized_signal != "ctrl_c":
-            raise KoKoProbeError(f"Unsupported interrupt signal: {signal!r}")
+        normalized_signal = normalize_interrupt_signal(signal)
         session = await self._require_session(session_handle)
         async with session._lock:
             before_seq = session.terminal.current_seq()
