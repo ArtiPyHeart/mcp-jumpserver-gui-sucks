@@ -234,13 +234,24 @@ class TerminalSessionManager:
             cols=cols,
             rows=rows,
         )
+        open_timeout_seconds = max(
+            settings.request_timeout_seconds * 2,
+            settings.request_timeout_seconds + max(3.0, startup_idle_timeout_seconds * 4),
+        )
         try:
-            await terminal.open()
-            startup = await terminal.drain_until_idle(
-                after_seq=0,
-                idle_timeout_seconds=startup_idle_timeout_seconds,
-                total_timeout_seconds=max(3.0, startup_idle_timeout_seconds * 4),
-            )
+            try:
+                async with asyncio.timeout(open_timeout_seconds):
+                    await terminal.open()
+                    startup = await terminal.drain_until_idle(
+                        after_seq=0,
+                        idle_timeout_seconds=startup_idle_timeout_seconds,
+                        total_timeout_seconds=max(3.0, startup_idle_timeout_seconds * 4),
+                    )
+            except TimeoutError as exc:
+                raise KoKoProbeError(
+                    "Timed out opening the managed KoKo terminal session "
+                    f"after {open_timeout_seconds:.1f}s."
+                ) from exc
             startup_raw = normalize_terminal_text(startup.raw_text())
             startup_text = strip_ansi_sequences(startup_raw)
             shell_prompt = detect_shell_prompt(startup_text)

@@ -427,39 +427,40 @@ def koko_probe_command(args: argparse.Namespace) -> int:
     return 0 if payload.get("ws_connected") else 1
 
 
-def terminal_exec_command(args: argparse.Namespace) -> int:
-    asset_id, account_id, resolved_target = asyncio.run(resolve_terminal_target_args(args))
-    opened = asyncio.run(
-        acquire_terminal_session_payload(
-            asset_ref=asset_id,
-            account_ref=account_id,
-            protocol=args.protocol,
-            connect_method=args.connect_method,
-            cols=args.cols,
-            rows=args.rows,
-            startup_idle_timeout_seconds=args.startup_idle_timeout_seconds,
-        )
+async def terminal_exec_async(args: argparse.Namespace) -> tuple[dict, int]:
+    asset_id, account_id, resolved_target = await resolve_terminal_target_args(args)
+    opened = await acquire_terminal_session_payload(
+        asset_ref=asset_id,
+        account_ref=account_id,
+        protocol=args.protocol,
+        connect_method=args.connect_method,
+        cols=args.cols,
+        rows=args.rows,
+        startup_idle_timeout_seconds=args.startup_idle_timeout_seconds,
     )
     session_handle = str(opened["session_handle"])
     try:
-        payload = asyncio.run(
-            run_terminal_command_payload(
-                session_handle=session_handle,
-                command=args.remote_command,
-                settle_timeout_seconds=args.command_idle_timeout_seconds,
-                total_timeout_seconds=args.total_timeout_seconds,
-            )
+        payload = await run_terminal_command_payload(
+            session_handle=session_handle,
+            command=args.remote_command,
+            settle_timeout_seconds=args.command_idle_timeout_seconds,
+            total_timeout_seconds=args.total_timeout_seconds,
         )
     finally:
         with contextlib.suppress(Exception):
-            asyncio.run(close_terminal_session_payload(session_handle))
+            await close_terminal_session_payload(session_handle)
     if resolved_target:
         payload["resolved_target"] = resolved_target
-    print_json(payload)
     exit_status = payload.get("exit_status")
     if isinstance(exit_status, int):
-        return exit_status
-    return 0 if payload.get("command_completed") else 1
+        return payload, exit_status
+    return payload, 0 if payload.get("command_completed") else 1
+
+
+def terminal_exec_command(args: argparse.Namespace) -> int:
+    payload, exit_code = asyncio.run(terminal_exec_async(args))
+    print_json(payload)
+    return exit_code
 
 
 def print_terminal_text(text: str) -> None:
