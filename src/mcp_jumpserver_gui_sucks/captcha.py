@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import tempfile
 
 import httpx
 
@@ -41,7 +42,7 @@ def fetch_captcha_challenge(client: httpx.Client, html: str) -> CaptchaChallenge
 
 
 def default_captcha_path(captcha_key: str) -> Path:
-    return Path("/private/tmp") / f"jumpserver-captcha-{captcha_key}.png"
+    return Path(tempfile.gettempdir()) / f"jumpserver-captcha-{captcha_key}.png"
 
 
 def save_captcha_challenge(

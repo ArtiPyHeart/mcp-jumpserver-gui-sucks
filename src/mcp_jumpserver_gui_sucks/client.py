@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -12,6 +13,17 @@ from .errors import ConfigError, JumpServerAPIError
 from .http_signature import build_signature_authorization, make_http_date
 
 LOGGER = logging.getLogger(__name__)
+
+
+def django_csrf_cookie_token(cookie_value: str) -> str:
+    """Decode a csrftoken cookie value the way Django does before comparing.
+
+    Django >=4.1 URL-decodes the CSRF cookie prior to validation, while
+    httpx exposes the raw percent-encoded Set-Cookie value. Passing the raw
+    value in ``X-CSRFToken`` makes Django reject the request with
+    "CSRF token from the 'X-Csrftoken' HTTP header incorrect."
+    """
+    return unquote(cookie_value.strip())
 
 
 class JumpServerClient:
@@ -54,7 +66,9 @@ class JumpServerClient:
         if self._settings.org_id:
             headers["X-JMS-ORG"] = self._settings.org_id
 
-        csrf_token = headers.get("X-CSRFToken") or cookie_lookup.get("jms_csrftoken")
+        csrf_token = headers.get("X-CSRFToken") or django_csrf_cookie_token(
+            cookie_lookup.get("jms_csrftoken", "")
+        )
         if csrf_token:
             headers["X-CSRFToken"] = csrf_token
 
