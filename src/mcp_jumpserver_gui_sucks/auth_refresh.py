@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from .auth_state import AuthState, build_cookie_state_from_jar
+from .client import django_csrf_cookie_token
 from .config import Settings
 from .errors import JumpServerAPIError, JumpServerMCPError
 
@@ -66,7 +67,9 @@ def enrich_auth_state_with_cookies(
     cookies = build_cookie_state_from_jar(cookie_jar, auth_state.base_url or settings.base_url)
     cookie_lookup = {cookie.name: cookie.value for cookie in cookies}
     headers = dict(auth_state.headers)
-    csrf_token = headers.get("X-CSRFToken") or cookie_lookup.get("jms_csrftoken")
+    csrf_token = headers.get("X-CSRFToken") or django_csrf_cookie_token(
+        cookie_lookup.get("jms_csrftoken", "")
+    )
     if csrf_token:
         headers["X-CSRFToken"] = csrf_token
     org_id = settings.org_id or headers.get("X-JMS-ORG") or cookie_lookup.get("X-JMS-ORG")

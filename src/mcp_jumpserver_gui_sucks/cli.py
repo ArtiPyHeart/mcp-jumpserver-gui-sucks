@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from .auth_state import AuthState, CookieState
 from .cli_login import run_cli_login
+from .client import django_csrf_cookie_token
 from .config import Settings
 from .logging_utils import configure_logging
 from .service import (
@@ -339,7 +340,7 @@ def save_state_command(args: argparse.Namespace, settings: Settings) -> int:
 
     cookie_lookup = {cookie.name: cookie.value for cookie in cookies}
     if "X-CSRFToken" not in headers and "jms_csrftoken" in cookie_lookup:
-        headers["X-CSRFToken"] = cookie_lookup["jms_csrftoken"]
+        headers["X-CSRFToken"] = django_csrf_cookie_token(cookie_lookup["jms_csrftoken"])
     explicit_org_id = args.org_id.strip() or settings.org_id
     if explicit_org_id:
         headers["X-JMS-ORG"] = explicit_org_id

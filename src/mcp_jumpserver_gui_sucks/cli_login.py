@@ -6,13 +6,13 @@ import logging
 from dataclasses import dataclass, field
 from html import unescape
 from typing import Any, Iterable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 
 from .auth_state import AuthState, build_cookie_state_from_jar
 from .captcha import fetch_captcha_challenge, save_and_open_captcha_challenge
-from .client import JumpServerClient
+from .client import JumpServerClient, django_csrf_cookie_token
 from .config import Settings
 from .crypto import encrypt_password
 from .errors import ConfigError, JumpServerMCPError
@@ -191,6 +191,7 @@ class JumpServerCLILogin:
             headers={"Accept": "application/json"},
             follow_redirects=True,
             trust_env=self._settings.use_environment_proxy,
+            event_hooks={"request": [self._sync_csrf_header]},
         )
         if self._org_id:
             self._client.headers["X-JMS-ORG"] = self._org_id
@@ -259,10 +260,37 @@ class JumpServerCLILogin:
             "Referer": self._absolute_url(referer_path),
         }
 
+    @staticmethod
+    def _csrf_cookie_token(cookie_value: str) -> str:
+        return unquote(cookie_value.strip())
+
+    def _current_csrf_token(self) -> str:
+        """Prefer the live ``jms_csrftoken`` cookie over any stored header.
+
+        The cookie jar is updated by every response, while a header captured
+        earlier goes stale once JumpServer rotates the token on login.
+        """
+        cookie_value = self._client.cookies.get("jms_csrftoken") or ""
+        if cookie_value:
+            return self._csrf_cookie_token(cookie_value)
+        return self._csrf_cookie_token(self._client.headers.get("X-CSRFToken", ""))
+
+    def _sync_csrf_header(self, request: httpx.Request) -> None:
+        """Align ``X-CSRFToken`` with the current cookie jar per request.
+
+        Django compares the header token against the session's current
+        ``jms_csrftoken`` cookie; reusing the bootstrap-time header after the
+        token rotated fails with HTTP 403 "CSRF token from the 'X-Csrftoken'
+        HTTP header incorrect."
+        """
+        if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return
+        csrf_token = self._current_csrf_token()
+        if csrf_token:
+            request.headers["X-CSRFToken"] = csrf_token
+
     def _csrf_token(self) -> str:
-        csrf_token = self._client.cookies.get("jms_csrftoken") or self._client.headers.get(
-            "X-CSRFToken", ""
-        )
+        csrf_token = self._current_csrf_token()
         if not csrf_token:
             raise LoginFlowError("The current login session does not have a CSRF token.")
         self._client.headers["X-CSRFToken"] = csrf_token
@@ -579,7 +607,9 @@ class JumpServerCLILogin:
         cookies = build_cookie_state(self._client, self._base_url)
         cookie_lookup = {cookie.name: cookie.value for cookie in cookies}
         headers: dict[str, str] = {}
-        csrf_token = self._client.headers.get("X-CSRFToken") or cookie_lookup.get("jms_csrftoken")
+        csrf_token = self._current_csrf_token() or django_csrf_cookie_token(
+            cookie_lookup.get("jms_csrftoken", "")
+        )
         if csrf_token:
             headers["X-CSRFToken"] = csrf_token
         org_id = self._client.headers.get("X-JMS-ORG") or cookie_lookup.get("X-JMS-ORG") or self._org_id
@@ -613,7 +643,9 @@ class JumpServerCLILogin:
         headers = dict(existing_headers or {})
         cookies = build_cookie_state(self._client, self._base_url)
         cookie_lookup = {cookie.name: cookie.value for cookie in cookies}
-        csrf_token = self._client.headers.get("X-CSRFToken") or cookie_lookup.get("jms_csrftoken")
+        csrf_token = self._current_csrf_token() or django_csrf_cookie_token(
+            cookie_lookup.get("jms_csrftoken", "")
+        )
         if csrf_token and "X-CSRFToken" not in headers:
             headers["X-CSRFToken"] = csrf_token
         if self._org_id and "X-JMS-ORG" not in headers:
@@ -648,7 +680,9 @@ class JumpServerCLILogin:
         cookies = build_cookie_state(self._client, self._base_url)
         cookie_lookup = {cookie.name: cookie.value for cookie in cookies}
         headers: dict[str, str] = {}
-        csrf_token = self._client.headers.get("X-CSRFToken") or cookie_lookup.get("jms_csrftoken")
+        csrf_token = self._current_csrf_token() or django_csrf_cookie_token(
+            cookie_lookup.get("jms_csrftoken", "")
+        )
         if csrf_token:
             headers["X-CSRFToken"] = csrf_token
         org_id = self._client.headers.get("X-JMS-ORG") or cookie_lookup.get("X-JMS-ORG") or self._org_id
