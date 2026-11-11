@@ -3,14 +3,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import getpass
 import json
 import sys
+import warnings
 from collections.abc import Sequence
 from urllib.parse import urlparse
 
+from .auth_refresh import TerminalSessionRefreshRequiredError
 from .auth_state import AuthState, CookieState
 from .cli_login import run_cli_login
 from .config import Settings
+from .errors import MissingAuthStateError
 from .logging_utils import configure_logging
 from .service import (
     acquire_terminal_session_payload,
@@ -65,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--username",
         required=True,
         help="JumpServer username for CLI login.",
+    )
+    login_parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read one password line from piped stdin; MFA still requires an interactive terminal.",
     )
     login_parser.add_argument(
         "--org-id",
@@ -396,15 +405,26 @@ def login_command(args: argparse.Namespace, settings: Settings) -> int:
             f"{settings.base_url_env_name}."
         )
 
-    result = run_cli_login(
-        settings,
-        base_url=base_url,
-        username=args.username.strip(),
-        org_id=(args.org_id or settings.org_id).strip(),
-        login_mfa_type=args.mfa_type.strip(),
-        confirm_mfa_type=args.confirm_mfa_type.strip(),
-        allow_ephemeral=bool(args.allow_ephemeral),
-    )
+    password = None
+    if args.password_stdin:
+        if sys.stdin.isatty():
+            raise ValueError("--password-stdin requires piped or redirected password input.")
+        password = sys.stdin.readline().rstrip("\r\n")
+
+    with warnings.catch_warnings():
+        if args.password_stdin:
+            # Never let an MFA prompt fall back to the password pipe without a terminal.
+            warnings.simplefilter("error", getpass.GetPassWarning)
+        result = run_cli_login(
+            settings,
+            base_url=base_url,
+            username=args.username.strip(),
+            password=password,
+            org_id=(args.org_id or settings.org_id).strip(),
+            login_mfa_type=args.mfa_type.strip(),
+            confirm_mfa_type=args.confirm_mfa_type.strip(),
+            allow_ephemeral=bool(args.allow_ephemeral),
+        )
     SessionStore(settings.state_file).save(result.auth_state)
     print_json(result.to_dict())
     return 0
@@ -623,7 +643,11 @@ def resolve_target_command(args: argparse.Namespace) -> int:
 
 
 def refresh_session_command(args: argparse.Namespace) -> int:
-    payload = asyncio.run(refresh_terminal_auth_payload(force=bool(args.force)))
+    try:
+        payload = asyncio.run(refresh_terminal_auth_payload(force=bool(args.force)))
+    except (MissingAuthStateError, TerminalSessionRefreshRequiredError) as exc:
+        print_json({"error": str(exc), "error_type": type(exc).__name__})
+        return 3
     print_json(payload)
     terminal_auth = payload.get("terminal_auth")
     if isinstance(terminal_auth, dict) and terminal_auth.get("cookie_session_authenticated"):

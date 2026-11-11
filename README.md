@@ -91,6 +91,13 @@ uvx mcp-jumpserver-gui-sucks login \
   --username alice
 ```
 
+To supply a password from a script, use `login --password-stdin` and pipe one
+password line into the command. MFA remains interactive. The optional
+[login script](examples/login.sh) first checks the persisted session and starts a
+fresh login only when `refresh-session --force` exits with `3`; network and
+service errors stop the script. See the [CLI login guide](docs/cli-login-flow.md)
+for plaintext password handling and exit-status details.
+
 Useful verification commands:
 
 ```bash

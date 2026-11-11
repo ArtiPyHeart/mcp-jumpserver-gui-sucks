@@ -126,7 +126,7 @@ async def refresh_terminal_cookie_session(
             f"{cookie_only_state.base_url or settings.base_url}{USER_SESSION_API_PATH}",
             headers=headers,
         )
-        if response.status_code in {401, 403}:
+        if response.status_code == 401:
             raise TerminalSessionRefreshRequiredError(
                 "The persisted web session for KoKo terminal access has expired or is no longer valid. "
                 "REST access-key authentication may still work, but terminal features require a fresh "
@@ -165,10 +165,17 @@ async def refresh_terminal_cookie_session(
                 status_code=response.status_code,
                 detail="Expected a JSON object response.",
             )
-        if not payload.get("ok"):
+        if payload.get("ok") is False:
             raise TerminalSessionRefreshRequiredError(
                 "JumpServer did not confirm the persisted terminal web session. "
                 "Re-run the CLI login command to renew it."
+            )
+        if payload.get("ok") is not True:
+            raise JumpServerAPIError(
+                method="GET",
+                path=USER_SESSION_API_PATH,
+                status_code=response.status_code,
+                detail="Expected a boolean ok field in the user-session response.",
             )
 
         refreshed_state = enrich_auth_state_with_cookies(

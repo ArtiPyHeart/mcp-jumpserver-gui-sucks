@@ -1,6 +1,6 @@
 # CLI Login Flow
 
-Date: 2026-03-12
+Date: 2026-11-11
 
 ## Purpose
 
@@ -21,6 +21,53 @@ The command prompts for:
 - password
 - web-session login MFA code when required
 - durable access-key confirmation code when required
+
+### Supplying a Password from a Script
+
+`login --password-stdin` reads exactly one password line from standard input.
+It removes the line ending and preserves other leading and trailing whitespace.
+Empty input fails before any login request; omitting the option keeps the hidden
+interactive password prompt.
+
+```bash
+JUMPSERVER_PASSWORD='your-plaintext-password'
+printf '%s\n' "$JUMPSERVER_PASSWORD" |
+  uvx mcp-jumpserver-gui-sucks@0.4.1 login \
+    --base-url https://jumpserver.example.com \
+    --username alice \
+    --password-stdin
+```
+
+MFA and captcha answers are still entered through the controlling terminal, not
+the password pipe. If a challenge needs hidden input and no controlling terminal
+is available, this mode fails instead of reading challenge answers from stdin.
+The supplied password is not added to auth state, login results, or application
+logs.
+
+The optional [login script](../examples/login.sh) stores the password as plaintext
+in a local shell variable and checks the persisted session before a fresh login.
+Copy it outside the repository, fill in the URL, username, and password, and set
+its permissions to `0700`. Use it with the state file belonging to that same
+JumpServer instance and user. The script disables shell tracing before assigning
+the password and does not export it or pass it as a process argument. Anyone
+able to read the script can read its password; keep the populated copy out of Git.
+
+### Scriptable Session Refresh
+
+`refresh-session --force` has these exit statuses:
+
+- `0`: the existing terminal web session was confirmed and saved.
+- `3`: no auth state or terminal cookies exist, or JumpServer explicitly rejected
+  the session with HTTP `401` or a JSON `ok: false` result. A fresh login is needed.
+- `1`: another failure, including network, TLS, permission (`403`), server,
+  malformed-response, or local state read/write errors. Report the error without
+  automatically logging in again.
+- `2`: invalid CLI arguments.
+- `130`: interrupted by the operator.
+
+The example script starts a fresh login only for exit status `3`. MFA remains
+manual whenever JumpServer requires it. The [glossary](../GLOSSARY.md) defines
+the distinction between session refresh, fresh login, and durable REST credentials.
 
 ## Implemented Authentication Strategy
 

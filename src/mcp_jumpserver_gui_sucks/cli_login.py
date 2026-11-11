@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import getpass
-import re
 import logging
+import re
 from dataclasses import dataclass, field
 from html import unescape
 from typing import Any, Iterable
@@ -235,7 +235,7 @@ class JumpServerCLILogin:
             print("Opened the captcha image in the system viewer.")
         print("If the captcha image shows a math expression, enter the computed result.")
 
-        captcha_code = input("Enter captcha answer: ").strip()
+        captcha_code = getpass.getpass("Enter captcha answer: ").strip()
         if not captcha_code:
             raise LoginFlowError("Missing captcha value.")
         return {
@@ -706,6 +706,7 @@ def run_cli_login(
     *,
     base_url: str,
     username: str,
+    password: str | None = None,
     org_id: str = "",
     login_mfa_type: str = "",
     confirm_mfa_type: str = "",
@@ -714,7 +715,8 @@ def run_cli_login(
     if not username.strip():
         raise ConfigError("Missing username. Provide --username for CLI login.")
 
-    password = getpass.getpass("Password: ")
+    if password is None:
+        password = getpass.getpass("Password: ")
     if not password:
         raise LoginFlowError("Password input was empty.")
 
