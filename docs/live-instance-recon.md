@@ -1,12 +1,25 @@
 # Live Instance Recon
 
-Date: 2026-03-12
+Updated: 2026-11-11
 
 ## Scope
 
-- Observed against `https://jumpserver.rabyte.cn` with a browser session that had already completed the normal human login flow.
-- The goal of this note is to record instance-specific behavior before any client code is written.
+- Observed against `https://jumpserver.rabyte.cn` using authenticated browser sessions and CLI requests.
+- The goal of this note is to record instance-specific API and authentication behavior.
 - Cookies, token values, asset IPs, usernames, email addresses, UUIDs, and other sensitive values are intentionally redacted.
+
+## Session Rejection Behavior
+
+Verified with direct CLI requests on 2026-11-11:
+
+- `GET /api/v1/authentication/user-session/` with the saved valid session returns
+  HTTP `200` and `{"ok": true}`.
+- The same request with only the session cookie replaced by an invalid value
+  returns HTTP `403` with an empty body. An anonymous request has the same result.
+- The upstream `UserSessionApi` reference agrees: it has no permission classes
+  and explicitly returns an empty `403` for `AnonymousUser`.
+- Session refresh therefore treats the empty `403` on this endpoint as requiring
+  a fresh login. A `403` with a body remains an error and does not trigger a login.
 
 ## Confirmed OpenAPI Facts
 

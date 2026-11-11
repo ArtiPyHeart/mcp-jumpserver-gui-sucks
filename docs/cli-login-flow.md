@@ -32,7 +32,7 @@ interactive password prompt.
 ```bash
 JUMPSERVER_PASSWORD='your-plaintext-password'
 printf '%s\n' "$JUMPSERVER_PASSWORD" |
-  uvx mcp-jumpserver-gui-sucks@0.4.1 login \
+  uvx mcp-jumpserver-gui-sucks@0.4.2 login \
     --base-url https://jumpserver.example.com \
     --username alice \
     --password-stdin
@@ -58,8 +58,10 @@ able to read the script can read its password; keep the populated copy out of Gi
 
 - `0`: the existing terminal web session was confirmed and saved.
 - `3`: no auth state or terminal cookies exist, or JumpServer explicitly rejected
-  the session with HTTP `401` or a JSON `ok: false` result. A fresh login is needed.
-- `1`: another failure, including network, TLS, permission (`403`), server,
+  the session with HTTP `401`, an empty HTTP `403`, or a JSON `ok: false` result.
+  A fresh login is needed. The empty `403` is the verified `UserSessionApi`
+  response for an anonymous user on the current deployment.
+- `1`: another failure, including network, TLS, permission (`403` with a body), server,
   malformed-response, or local state read/write errors. Report the error without
   automatically logging in again.
 - `2`: invalid CLI arguments.

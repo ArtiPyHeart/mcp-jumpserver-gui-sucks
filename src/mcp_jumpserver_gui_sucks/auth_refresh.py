@@ -126,7 +126,10 @@ async def refresh_terminal_cookie_session(
             f"{cookie_only_state.base_url or settings.base_url}{USER_SESSION_API_PATH}",
             headers=headers,
         )
-        if response.status_code == 401:
+        # UserSessionApi returns an empty 403 for AnonymousUser without a permission check.
+        if response.status_code == 401 or (
+            response.status_code == 403 and not response.content
+        ):
             raise TerminalSessionRefreshRequiredError(
                 "The persisted web session for KoKo terminal access has expired or is no longer valid. "
                 "REST access-key authentication may still work, but terminal features require a fresh "
